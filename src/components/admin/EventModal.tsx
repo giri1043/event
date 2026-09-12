@@ -35,8 +35,9 @@ export const EventModal: React.FC<EventModalProps> = ({
   );
   const [rsvpDeadline, setRsvpDeadline] = useState(eventToEdit?.rsvpDeadline || '');
   const [imageUrl, setImageUrl] = useState(eventToEdit?.imageUrl || '');
-  const [imageSource, setImageSource] = useState<'upload' | 'url'>(
-    eventToEdit?.imageSource || (eventToEdit?.imageUrl?.startsWith('http') ? 'url' : 'upload')
+  const [googleDriveFileId, setGoogleDriveFileId] = useState<string>(eventToEdit?.googleDriveFileId || '');
+  const [imageSource, setImageSource] = useState<'upload' | 'url' | 'google_drive'>(
+    eventToEdit?.imageSource || (eventToEdit?.imageUrl?.includes('google') ? 'google_drive' : eventToEdit?.imageUrl?.startsWith('http') ? 'url' : 'upload')
   );
   const [imagePosition, setImagePosition] = useState<'top' | 'center' | 'bottom'>(
     eventToEdit?.imagePosition || 'top'
@@ -76,9 +77,10 @@ export const EventModal: React.FC<EventModalProps> = ({
         );
         setRsvpDeadline(eventToEdit.rsvpDeadline || '');
         setImageUrl(eventToEdit.imageUrl || '');
-        const src = eventToEdit.imageSource || (eventToEdit.imageUrl?.startsWith('http') ? 'url' : 'upload');
+        setGoogleDriveFileId(eventToEdit.googleDriveFileId || '');
+        const src = eventToEdit.imageSource || (eventToEdit.imageUrl?.includes('google') ? 'google_drive' : eventToEdit.imageUrl?.startsWith('http') ? 'url' : 'upload');
         setImageSource(src);
-        setUploadTab(src);
+        setUploadTab(src === 'upload' ? 'upload' : 'url');
         setImagePosition(eventToEdit.imagePosition || 'top');
         setImageAspect(eventToEdit.imageAspect || 'auto');
         setImageFit(eventToEdit.imageFit || 'cover');
@@ -97,6 +99,7 @@ export const EventModal: React.FC<EventModalProps> = ({
         );
         setRsvpDeadline('');
         setImageUrl('');
+        setGoogleDriveFileId('');
         setImageSource('upload');
         setUploadTab('upload');
         setImagePosition('top');
@@ -139,6 +142,7 @@ export const EventModal: React.FC<EventModalProps> = ({
 
         setImageUrl(data.url);
         setImageSource('upload');
+        setGoogleDriveFileId('');
       } catch (err: any) {
         setError(err.message || 'Failed to upload photo');
       } finally {
@@ -187,6 +191,7 @@ export const EventModal: React.FC<EventModalProps> = ({
         rsvpDeadline: rsvpDeadline.trim(),
         imageUrl: imageUrl.trim(),
         imageSource,
+        googleDriveFileId,
         imagePosition,
         imageAspect,
         imageFit
@@ -473,7 +478,13 @@ export const EventModal: React.FC<EventModalProps> = ({
                       setError(null);
                       const parsed = parseAndConvertImageUrl(e.target.value);
                       setImageUrl(parsed.url);
-                      setImageSource('url');
+                      if (parsed.isGoogleDrive) {
+                        setImageSource('google_drive');
+                        setGoogleDriveFileId(parsed.fileId || '');
+                      } else {
+                        setImageSource('url');
+                        setGoogleDriveFileId('');
+                      }
                     }}
                     placeholder="https://example.com/portrait.jpg or Google Drive share link"
                     className="w-full px-3.5 py-2.5 rounded-xl bg-white border border-[#d6c7b5] text-sm text-[#2d251d] focus:outline-hidden focus:ring-2 focus:ring-[#b38b4d]/40 focus:border-[#b38b4d] pr-9"
