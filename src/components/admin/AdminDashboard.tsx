@@ -325,7 +325,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ token, onLogout 
                 >
                   {events.map((ev) => (
                     <option key={ev.id} value={ev.id}>
-                      {ev.title} ({ev.date})
+                      {ev.title || ev.hostNames} ({ev.date})
                     </option>
                   ))}
                 </select>
@@ -438,13 +438,21 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ token, onLogout 
                     </span>
                   </div>
 
-                  <h1 className="font-serif text-2xl sm:text-3xl text-[#2b221a] font-normal leading-tight">
-                    {currentEvent.title}
-                  </h1>
+                  {currentEvent.title ? (
+                    <h1 className="font-serif text-2xl sm:text-3xl text-[#2b221a] font-normal leading-tight">
+                      {currentEvent.title}
+                    </h1>
+                  ) : (
+                    <h1 className="font-serif text-2xl sm:text-3xl text-[#2b221a] font-normal leading-tight">
+                      {currentEvent.hostNames}
+                    </h1>
+                  )}
 
-                  <p className="text-sm text-[#544331] mt-1 font-medium">
-                    {currentEvent.hostNames}
-                  </p>
+                  {currentEvent.title ? (
+                    <p className="text-sm text-[#544331] mt-1 font-medium">
+                      {currentEvent.hostNames}
+                    </p>
+                  ) : null}
 
                   <div className="flex flex-wrap items-center gap-4 text-xs text-[#786450] mt-3">
                     <span className="flex items-center gap-1.5">
@@ -592,7 +600,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ token, onLogout 
                   {/* CSV Export */}
                   <button
                     type="button"
-                    onClick={() => exportGuestsToCSV(guests, currentEvent.title)}
+                    onClick={() => exportGuestsToCSV(guests, currentEvent.title || currentEvent.hostNames)}
                     disabled={guests.length === 0}
                     className="py-2 px-3 rounded-xl bg-[#f2ebd9] hover:bg-[#e6dcc6] text-[#4d3d2b] text-xs font-medium tracking-wide flex items-center gap-1.5 border border-[#d9ccb6] disabled:opacity-40 transition-colors cursor-pointer"
                   >
