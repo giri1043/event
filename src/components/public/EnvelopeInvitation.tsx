@@ -173,6 +173,12 @@ export const EnvelopeInvitation: React.FC<EnvelopeInvitationProps> = ({
 
       if (data.guest) {
         setGuest(data.guest);
+        if (data.guest.guestCode) {
+          const newPath = `/${event.slug}/${data.guest.guestCode}`;
+          if (window.location.pathname !== newPath) {
+            window.history.replaceState({}, '', newPath);
+          }
+        }
         if (onRsvpSuccess) onRsvpSuccess(data.guest);
       }
 
