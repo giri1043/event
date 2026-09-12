@@ -88,7 +88,7 @@ export const AdminUserModel = mongoose.model('AdminUser', adminUserSchema);
 const eventSchema = new mongoose.Schema({
   id: { type: String, required: true, unique: true },
   slug: { type: String, required: true, unique: true, lowercase: true, trim: true },
-  title: { type: String, required: true },
+  title: { type: String, default: '' },
   hostNames: { type: String, required: true },
   celebrationType: { type: String, default: 'Celebration' },
   date: { type: String, required: true },
@@ -586,11 +586,11 @@ app.post('/api/events', requireAdmin, async (req, res) => {
       rsvpDeadline
     } = req.body;
 
-    if (!title || !hostNames || !date) {
-      return res.status(400).json({ error: 'Title, Host Names, and Date are required' });
+    if (!hostNames || !date) {
+      return res.status(400).json({ error: 'Host Names and Date are required' });
     }
 
-    let cleanSlug = (slug || title)
+    let cleanSlug = (slug || title || hostNames)
       .toLowerCase()
       .trim()
       .replace(/[^a-z0-9]+/g, '-')
@@ -605,7 +605,7 @@ app.post('/api/events', requireAdmin, async (req, res) => {
     const newEvent = await EventModel.create({
       id: `evt-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`,
       slug: cleanSlug,
-      title,
+      title: title || '',
       hostNames,
       celebrationType: celebrationType || 'Celebration',
       date,
