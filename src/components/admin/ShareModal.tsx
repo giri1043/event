@@ -38,9 +38,10 @@ export const ShareModal: React.FC<ShareModalProps> = ({
   const fullUrl = `${origin}${invitePath}`;
 
   // Pre-formatted message
+  const titleSegment = event.title ? ` for "${event.title}"` : '';
   const whatsappText = currentGuest
-    ? `Dear ${currentGuest.name},\n\nYou are cordially invited to celebrate with ${event.hostNames} for "${event.title}" on ${event.date}.\n\nKindly view your formal digital invitation and RSVP here:\n${fullUrl}`
-    : `You are cordially invited to celebrate with ${event.hostNames} for "${event.title}" on ${event.date}.\n\nKindly view your digital invitation and RSVP here:\n${fullUrl}`;
+    ? `Dear ${currentGuest.name},\n\nYou are cordially invited to celebrate with ${event.hostNames}${titleSegment} on ${event.date}.\n\nKindly view your formal digital invitation and RSVP here:\n${fullUrl}`
+    : `You are cordially invited to celebrate with ${event.hostNames}${titleSegment} on ${event.date}.\n\nKindly view your digital invitation and RSVP here:\n${fullUrl}`;
 
   const whatsappUrl = `https://api.whatsapp.com/send?text=${encodeURIComponent(whatsappText)}`;
   const smsUrl = `sms:?&body=${encodeURIComponent(whatsappText)}`;
