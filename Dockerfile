@@ -26,6 +26,7 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=3000
 ENV MONGODB_URI=mongodb://giridha1043_db_user:fKlSyoi5LTc8CVhf@ac-7mjxnjl-shard-00-00.pw6tzia.mongodb.net:27017,ac-7mjxnjl-shard-00-01.pw6tzia.mongodb.net:27017,ac-7mjxnjl-shard-00-02.pw6tzia.mongodb.net:27017/dwrs?ssl=true&authSource=admin&retryWrites=true&w=majority
+ENV MONGODB_DB_NAME=event
 
 # Copy package files
 COPY package*.json ./
