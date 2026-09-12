@@ -6,7 +6,7 @@ WORKDIR /app
 # Copy dependency files
 COPY package*.json ./
 
-# Install dependencies for building
+# Install all dependencies
 RUN npm ci
 
 # Copy full application code
@@ -14,6 +14,9 @@ COPY . .
 
 # Run production build (compiles Vite frontend & esbuild server)
 RUN npm run build
+
+# Prune devDependencies cleanly without script execution errors
+RUN npm prune --omit=dev --ignore-scripts
 
 # Step 2: Production runtime stage
 FROM node:20-alpine AS runner
@@ -23,11 +26,13 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=3000
 
-# Copy package files and install production dependencies
+# Copy package files
 COPY package*.json ./
-RUN npm ci --only=production
 
-# Copy compiled assets from builder
+# Copy pre-pruned node_modules from builder stage
+COPY --from=builder /app/node_modules ./node_modules
+
+# Copy compiled assets from builder stage
 COPY --from=builder /app/dist ./dist
 
 # Ensure persistence directories exist
