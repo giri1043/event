@@ -1,6 +1,7 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { X, Upload, Image as ImageIcon, Link as LinkIcon, Check, AlertCircle, Trash2 } from 'lucide-react';
 import { EventItem } from '../../types';
+import { parseAndConvertImageUrl, testImageLoad } from '../../utils/image';
 
 interface EventModalProps {
   isOpen: boolean;
@@ -34,6 +35,9 @@ export const EventModal: React.FC<EventModalProps> = ({
   );
   const [rsvpDeadline, setRsvpDeadline] = useState(eventToEdit?.rsvpDeadline || '');
   const [imageUrl, setImageUrl] = useState(eventToEdit?.imageUrl || '');
+  const [imageSource, setImageSource] = useState<'upload' | 'url'>(
+    eventToEdit?.imageSource || (eventToEdit?.imageUrl?.startsWith('http') ? 'url' : 'upload')
+  );
   const [imagePosition, setImagePosition] = useState<'top' | 'center' | 'bottom'>(
     eventToEdit?.imagePosition || 'top'
   );
@@ -44,12 +48,64 @@ export const EventModal: React.FC<EventModalProps> = ({
     eventToEdit?.imageFit || 'cover'
   );
 
-  const [uploadTab, setUploadTab] = useState<'upload' | 'url'>('upload');
+  const [uploadTab, setUploadTab] = useState<'upload' | 'url'>(
+    eventToEdit?.imageSource || (eventToEdit?.imageUrl?.startsWith('http') ? 'url' : 'upload')
+  );
   const [isUploading, setIsUploading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Sync form state when modal opens or eventToEdit changes
+  useEffect(() => {
+    if (isOpen) {
+      if (eventToEdit) {
+        setSlug(eventToEdit.slug || '');
+        setTitle(eventToEdit.title || '');
+        setHostNames(eventToEdit.hostNames || '');
+        setCelebrationType(eventToEdit.celebrationType || 'Wedding');
+        setDate(eventToEdit.date || '');
+        setTime(eventToEdit.time || '4:30 PM');
+        setVenueName(eventToEdit.venueName || '');
+        setVenueAddress(eventToEdit.venueAddress || '');
+        setGoogleMapsUrl(eventToEdit.googleMapsUrl || '');
+        setInvitationMessage(
+          eventToEdit.invitationMessage ||
+            'Together with our families, we invite you to join us in celebrating our special day with an evening of dinner, music, and joy.'
+        );
+        setRsvpDeadline(eventToEdit.rsvpDeadline || '');
+        setImageUrl(eventToEdit.imageUrl || '');
+        const src = eventToEdit.imageSource || (eventToEdit.imageUrl?.startsWith('http') ? 'url' : 'upload');
+        setImageSource(src);
+        setUploadTab(src);
+        setImagePosition(eventToEdit.imagePosition || 'top');
+        setImageAspect(eventToEdit.imageAspect || 'auto');
+        setImageFit(eventToEdit.imageFit || 'cover');
+      } else {
+        setSlug('');
+        setTitle('');
+        setHostNames('');
+        setCelebrationType('Wedding');
+        setDate('');
+        setTime('4:30 PM');
+        setVenueName('');
+        setVenueAddress('');
+        setGoogleMapsUrl('');
+        setInvitationMessage(
+          'Together with our families, we invite you to join us in celebrating our special day with an evening of dinner, music, and joy.'
+        );
+        setRsvpDeadline('');
+        setImageUrl('');
+        setImageSource('upload');
+        setUploadTab('upload');
+        setImagePosition('top');
+        setImageAspect('auto');
+        setImageFit('cover');
+      }
+      setError(null);
+    }
+  }, [isOpen, eventToEdit]);
 
   if (!isOpen) return null;
 
@@ -82,6 +138,7 @@ export const EventModal: React.FC<EventModalProps> = ({
         }
 
         setImageUrl(data.url);
+        setImageSource('upload');
       } catch (err: any) {
         setError(err.message || 'Failed to upload photo');
       } finally {
@@ -106,6 +163,16 @@ export const EventModal: React.FC<EventModalProps> = ({
     setError(null);
 
     try {
+      if (imageUrl && uploadTab === 'url') {
+        const parsed = parseAndConvertImageUrl(imageUrl);
+        const test = await testImageLoad(parsed.url, parsed.isGoogleDrive);
+        if (!test.valid) {
+          setError(test.error || 'Unable to load image from provided URL.');
+          setIsSaving(false);
+          return;
+        }
+      }
+
       const payload = {
         slug: slug.trim(),
         title: title.trim(),
@@ -119,6 +186,7 @@ export const EventModal: React.FC<EventModalProps> = ({
         invitationMessage: invitationMessage.trim(),
         rsvpDeadline: rsvpDeadline.trim(),
         imageUrl: imageUrl.trim(),
+        imageSource,
         imagePosition,
         imageAspect,
         imageFit
@@ -396,17 +464,25 @@ export const EventModal: React.FC<EventModalProps> = ({
                 </p>
               </div>
             ) : (
-              <div>
+              <div className="space-y-1.5">
                 <div className="relative">
                   <input
                     type="url"
                     value={imageUrl}
-                    onChange={(e) => setImageUrl(e.target.value)}
-                    placeholder="https://example.com/portrait.jpg"
+                    onChange={(e) => {
+                      setError(null);
+                      const parsed = parseAndConvertImageUrl(e.target.value);
+                      setImageUrl(parsed.url);
+                      setImageSource('url');
+                    }}
+                    placeholder="https://example.com/portrait.jpg or Google Drive share link"
                     className="w-full px-3.5 py-2.5 rounded-xl bg-white border border-[#d6c7b5] text-sm text-[#2d251d] focus:outline-hidden focus:ring-2 focus:ring-[#b38b4d]/40 focus:border-[#b38b4d] pr-9"
                   />
                   <LinkIcon className="w-4 h-4 text-[#9b8772] absolute right-3 top-3" />
                 </div>
+                <p className="text-[11px] text-[#8e7862] leading-normal">
+                  💡 Supports direct image URLs or Google Drive share links (e.g. <span className="font-mono text-[#544331]">drive.google.com/file/d/.../view</span>). Ensure Google Drive file permission is set to <strong>"Anyone with the link"</strong>.
+                </p>
               </div>
             )}
 
