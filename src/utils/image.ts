@@ -12,7 +12,8 @@ export interface ParsedImageResult {
 
 /**
  * Parses any raw image URL input and converts Google Drive share links
- * into direct browser-displayable image URLs (lh3.googleusercontent.com/d/FILE_ID).
+ * (including /file/d/FILE_ID/view?usp=drive_link, open?id=FILE_ID, uc?id=FILE_ID)
+ * into direct browser-displayable thumbnail URLs (https://drive.google.com/thumbnail?id=FILE_ID&sz=w2000).
  */
 export function parseAndConvertImageUrl(rawUrl: string): ParsedImageResult {
   const originalUrl = (rawUrl || '').trim();
@@ -20,36 +21,31 @@ export function parseAndConvertImageUrl(rawUrl: string): ParsedImageResult {
     return { url: '', isGoogleDrive: false, originalUrl: '' };
   }
 
+  let fileId: string | undefined;
+
   // Pattern 1: https://drive.google.com/file/d/FILE_ID/...
   const fileDMatch = originalUrl.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
   if (fileDMatch && fileDMatch[1]) {
-    const fileId = fileDMatch[1];
-    return {
-      url: `https://lh3.googleusercontent.com/d/${fileId}`,
-      isGoogleDrive: true,
-      fileId,
-      originalUrl
-    };
+    fileId = fileDMatch[1];
   }
 
-  // Pattern 2: https://drive.google.com/open?id=FILE_ID or uc?id=FILE_ID
-  const idMatch = originalUrl.match(/[?&]id=([a-zA-Z0-9_-]+)/);
-  if (idMatch && idMatch[1]) {
-    const fileId = idMatch[1];
-    return {
-      url: `https://lh3.googleusercontent.com/d/${fileId}`,
-      isGoogleDrive: true,
-      fileId,
-      originalUrl
-    };
+  // Pattern 2: https://drive.google.com/open?id=FILE_ID or uc?id=FILE_ID or thumbnail?id=FILE_ID
+  if (!fileId) {
+    const idMatch = originalUrl.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+    if (idMatch && idMatch[1]) {
+      fileId = idMatch[1];
+    }
   }
 
-  // Pattern 3: Already googleusercontent CDN link
-  if (originalUrl.includes('googleusercontent.com/d/')) {
+  // Pattern 3: googleusercontent.com/d/FILE_ID
+  if (!fileId && originalUrl.includes('googleusercontent.com/d/')) {
     const parts = originalUrl.split('googleusercontent.com/d/')[1];
-    const fileId = parts ? parts.split('?')[0].split('/')[0] : undefined;
+    fileId = parts ? parts.split('?')[0].split('/')[0] : undefined;
+  }
+
+  if (fileId) {
     return {
-      url: originalUrl,
+      url: `https://drive.google.com/thumbnail?id=${fileId}&sz=w2000`,
       isGoogleDrive: true,
       fileId,
       originalUrl
@@ -91,7 +87,7 @@ export function testImageLoad(url: string, isGoogleDrive: boolean): Promise<{ va
         resolve({
           valid: false,
           error: isGoogleDrive
-            ? "Please make the Google Drive image accessible to anyone with the link."
+            ? "Google Drive image is not publicly accessible. Please set General Access to Anyone with the link."
             : "The provided link does not appear to be a valid image."
         });
       }
@@ -102,7 +98,7 @@ export function testImageLoad(url: string, isGoogleDrive: boolean): Promise<{ va
       resolve({
         valid: false,
         error: isGoogleDrive
-          ? "Please make the Google Drive image accessible to anyone with the link (Set access to 'Anyone with the link' in Google Drive)."
+          ? "Google Drive image is not publicly accessible. Please set General Access to Anyone with the link."
           : "Unable to load image from URL. Please verify the URL points to a public image file."
       });
     };
@@ -113,7 +109,7 @@ export function testImageLoad(url: string, isGoogleDrive: boolean): Promise<{ va
       resolve({
         valid: false,
         error: isGoogleDrive
-          ? "Google Drive image load timed out. Please verify file sharing permission is set to 'Anyone with the link'."
+          ? "Google Drive image is not publicly accessible. Please set General Access to Anyone with the link."
           : "Image load timed out. Please check the image URL."
       });
     }, 8000);
