@@ -2,12 +2,13 @@ import express from 'express';
 import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
+import mongoose from 'mongoose';
 import { createServer as createViteServer } from 'vite';
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
 
-// Setup directories for persistence and file uploads
+// Setup directories for file uploads
 const DATA_DIR = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.join(process.cwd(), 'data');
 const UPLOADS_DIR = process.env.UPLOADS_DIR ? path.resolve(process.env.UPLOADS_DIR) : path.join(process.cwd(), 'uploads');
 const DB_FILE = process.env.DB_FILE_PATH ? path.resolve(process.env.DB_FILE_PATH) : path.join(DATA_DIR, 'db.json');
@@ -19,7 +20,19 @@ if (!fs.existsSync(UPLOADS_DIR)) {
   fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 }
 
-// Data Types
+// MongoDB Connection
+const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://giridha1043_db_user:fKlSyoi5LTc8CVhf@ac-7mjxnjl-shard-00-00.pw6tzia.mongodb.net:27017,ac-7mjxnjl-shard-00-01.pw6tzia.mongodb.net:27017,ac-7mjxnjl-shard-00-02.pw6tzia.mongodb.net:27017/dwrs?ssl=true&authSource=admin&retryWrites=true&w=majority';
+
+mongoose.connect(MONGODB_URI)
+  .then(() => {
+    console.log(`Connected to MongoDB Atlas successfully: ${MONGODB_URI.split('@').pop()}`);
+    seedFromLegacyFileIfNeeded();
+  })
+  .catch((err) => {
+    console.error('MongoDB connection error:', err);
+  });
+
+// Data Interfaces
 export interface EventItem {
   id: string;
   slug: string;
@@ -55,101 +68,100 @@ export interface GuestItem {
   updatedAt: string;
 }
 
-interface DatabaseSchema {
-  adminUsername?: string;
-  adminPasswordHash: string;
-  adminTokens?: string[];
-  events: EventItem[];
-  guests: GuestItem[];
-}
-
 function hashPassword(pwd: string): string {
   return crypto.createHash('sha256').update(pwd).digest('hex');
 }
 
-// Read database with fallback to backup file to prevent data loss
-function readDb(): DatabaseSchema {
-  const defaultAdminUser = process.env.ADMIN_USERNAME || 'admin';
-  const defaultAdminPass = process.env.ADMIN_PASSWORD || 'admin123';
-  const bakFile = `${DB_FILE}.bak`;
+// --- MONGOOSE SCHEMAS & MODELS ---
 
-  const validateAndFormatData = (parsed: any): DatabaseSchema | null => {
-    if (!parsed || typeof parsed !== 'object') return null;
-    if (!parsed.adminUsername) parsed.adminUsername = defaultAdminUser;
-    if (!parsed.adminPasswordHash) parsed.adminPasswordHash = hashPassword(defaultAdminPass);
-    if (!Array.isArray(parsed.adminTokens)) parsed.adminTokens = [];
-    if (!Array.isArray(parsed.events)) parsed.events = [];
-    if (!Array.isArray(parsed.guests)) parsed.guests = [];
-    return parsed as DatabaseSchema;
-  };
+// Admin User Schema
+const adminUserSchema = new mongoose.Schema({
+  username: { type: String, required: true, unique: true, default: 'admin' },
+  passwordHash: { type: String, required: true },
+  tokens: { type: [String], default: [] }
+}, { timestamps: true });
 
-  if (fs.existsSync(DB_FILE)) {
-    try {
-      const raw = fs.readFileSync(DB_FILE, 'utf-8');
-      const parsed = JSON.parse(raw);
-      const formatted = validateAndFormatData(parsed);
-      if (formatted) return formatted;
-    } catch (err) {
-      console.error('Error reading primary db.json file:', err);
+export const AdminUserModel = mongoose.model('AdminUser', adminUserSchema);
+
+// Event Schema
+const eventSchema = new mongoose.Schema({
+  id: { type: String, required: true, unique: true },
+  slug: { type: String, required: true, unique: true, lowercase: true, trim: true },
+  title: { type: String, required: true },
+  hostNames: { type: String, required: true },
+  celebrationType: { type: String, default: 'Celebration' },
+  date: { type: String, required: true },
+  time: { type: String, default: '5:00 PM' },
+  venueName: { type: String, default: '' },
+  venueAddress: { type: String, default: '' },
+  googleMapsUrl: { type: String, default: '' },
+  invitationMessage: { type: String, default: '' },
+  imageUrl: { type: String, default: '' },
+  imagePosition: { type: String, default: 'top' },
+  imageAspect: { type: String, default: 'auto' },
+  imageFit: { type: String, default: 'cover' },
+  rsvpDeadline: { type: String, default: '' }
+}, { timestamps: true });
+
+export const EventModel = mongoose.model('Event', eventSchema);
+
+// Guest Schema
+const guestSchema = new mongoose.Schema({
+  id: { type: String, required: true, unique: true },
+  eventId: { type: String, required: true, index: true },
+  guestCode: { type: String, required: true, uppercase: true, trim: true },
+  name: { type: String, required: true },
+  mobileNumber: { type: String, default: '' },
+  maxGuests: { type: Number, default: 2 },
+  status: { type: String, enum: ['pending', 'attending', 'declined'], default: 'pending' },
+  attendingCount: { type: Number, default: 0 },
+  notes: { type: String, default: '' },
+  dietaryPreferences: { type: String, default: '' }
+}, { timestamps: true });
+
+guestSchema.index({ eventId: 1, guestCode: 1 }, { unique: true });
+
+export const GuestModel = mongoose.model('Guest', guestSchema);
+
+// Seed existing data from legacy db.json if MongoDB collection is empty
+async function seedFromLegacyFileIfNeeded() {
+  try {
+    const defaultAdminUser = process.env.ADMIN_USERNAME || 'admin';
+    const defaultAdminPass = process.env.ADMIN_PASSWORD || 'admin123';
+
+    let admin = await AdminUserModel.findOne();
+    if (!admin) {
+      admin = await AdminUserModel.create({
+        username: defaultAdminUser,
+        passwordHash: hashPassword(defaultAdminPass),
+        tokens: []
+      });
     }
 
-    // Try reading backup file if primary file read/parse failed
-    if (fs.existsSync(bakFile)) {
+    const eventCount = await EventModel.countDocuments();
+    if (eventCount === 0 && fs.existsSync(DB_FILE)) {
       try {
-        console.warn('Attempting to recover database from backup db.json.bak...');
-        const bakRaw = fs.readFileSync(bakFile, 'utf-8');
-        const parsedBak = JSON.parse(bakRaw);
-        const formattedBak = validateAndFormatData(parsedBak);
-        if (formattedBak) {
-          writeDb(formattedBak);
-          return formattedBak;
+        const raw = fs.readFileSync(DB_FILE, 'utf-8');
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed.events) && parsed.events.length > 0) {
+          for (const ev of parsed.events) {
+            await EventModel.updateOne({ id: ev.id }, ev, { upsert: true });
+          }
+          console.log(`Successfully migrated ${parsed.events.length} events from db.json into MongoDB`);
         }
-      } catch (err) {
-        console.error('Error reading backup db.json.bak:', err);
+        if (Array.isArray(parsed.guests) && parsed.guests.length > 0) {
+          for (const g of parsed.guests) {
+            await GuestModel.updateOne({ id: g.id }, g, { upsert: true });
+          }
+          console.log(`Successfully migrated ${parsed.guests.length} guests from db.json into MongoDB`);
+        }
+      } catch (e) {
+        console.error('Error reading legacy db.json for seeding:', e);
       }
     }
-    console.error('CRITICAL: DB file exists but could not be parsed. Preserving existing file.');
+  } catch (err) {
+    console.error('Error initializing MongoDB admin/seed:', err);
   }
-
-  // Initial fresh database only if DB_FILE did not exist
-  const initialDb: DatabaseSchema = {
-    adminUsername: defaultAdminUser,
-    adminPasswordHash: hashPassword(defaultAdminPass),
-    adminTokens: [],
-    events: [],
-    guests: []
-  };
-
-  if (!fs.existsSync(DB_FILE)) {
-    writeDb(initialDb);
-  }
-  return initialDb;
-}
-
-// Write database atomically with rolling backup
-function writeDb(db: DatabaseSchema) {
-  const tempFile = `${DB_FILE}.tmp`;
-  const bakFile = `${DB_FILE}.bak`;
-
-  // Always retain backup array fields
-  if (!Array.isArray(db.adminTokens)) db.adminTokens = [];
-  if (!Array.isArray(db.events)) db.events = [];
-  if (!Array.isArray(db.guests)) db.guests = [];
-
-  // Write to temporary file
-  fs.writeFileSync(tempFile, JSON.stringify(db, null, 2), 'utf-8');
-
-  // Maintain backup copy of DB_FILE before overwriting
-  if (fs.existsSync(DB_FILE)) {
-    try {
-      fs.copyFileSync(DB_FILE, bakFile);
-    } catch (err) {
-      console.warn('Could not update db.json.bak:', err);
-    }
-  }
-
-  // Replace primary DB file
-  fs.renameSync(tempFile, DB_FILE);
 }
 
 // Configure CORS for production domains or allowed origins
@@ -172,95 +184,115 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 app.use('/uploads', express.static(UPLOADS_DIR));
 
 // Database-backed admin token authentication middleware
-function requireAdmin(req: express.Request, res: express.Response, next: express.NextFunction) {
-  const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return res.status(401).json({ error: 'Unauthorized. Admin credentials required.' });
+async function requireAdmin(req: express.Request, res: express.Response, next: express.NextFunction) {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ error: 'Unauthorized. Admin credentials required.' });
+    }
+    const token = authHeader.split(' ')[1];
+    const admin = await AdminUserModel.findOne({ tokens: token });
+    if (!admin) {
+      return res.status(401).json({ error: 'Session expired or invalid.' });
+    }
+    (req as any).adminUser = admin;
+    next();
+  } catch (err) {
+    return res.status(500).json({ error: 'Database authentication error' });
   }
-  const token = authHeader.split(' ')[1];
-  const db = readDb();
-  if (!db.adminTokens || !db.adminTokens.includes(token)) {
-    return res.status(401).json({ error: 'Session expired or invalid.' });
-  }
-  next();
 }
 
 // --- AUTH API ROUTES ---
-app.post('/api/auth/login', (req, res) => {
-  const { username, password } = req.body;
-  if (!password) {
-    return res.status(400).json({ error: 'Password is required' });
-  }
-
-  const db = readDb();
-  const validUsername = db.adminUsername || 'admin';
-
-  // If username is provided, check it matches
-  if (username && username.trim().toLowerCase() !== validUsername.toLowerCase()) {
-    return res.status(401).json({ error: 'Invalid administrator username or credentials' });
-  }
-
-  if (hashPassword(password) === db.adminPasswordHash) {
-    const token = crypto.randomBytes(32).toString('hex');
-    if (!Array.isArray(db.adminTokens)) {
-      db.adminTokens = [];
+app.post('/api/auth/login', async (req, res) => {
+  try {
+    const { username, password } = req.body;
+    if (!password) {
+      return res.status(400).json({ error: 'Password is required' });
     }
-    db.adminTokens.push(token);
-    writeDb(db);
-    return res.json({ success: true, token, username: validUsername });
-  } else {
-    return res.status(401).json({ error: 'Invalid administrator password' });
+
+    const defaultAdminUser = process.env.ADMIN_USERNAME || 'admin';
+    let admin = await AdminUserModel.findOne();
+    if (!admin) {
+      admin = await AdminUserModel.create({
+        username: defaultAdminUser,
+        passwordHash: hashPassword(process.env.ADMIN_PASSWORD || 'admin123'),
+        tokens: []
+      });
+    }
+
+    const validUsername = admin.username || defaultAdminUser;
+    if (username && username.trim().toLowerCase() !== validUsername.toLowerCase()) {
+      return res.status(401).json({ error: 'Invalid administrator username or credentials' });
+    }
+
+    if (hashPassword(password) === admin.passwordHash) {
+      const token = crypto.randomBytes(32).toString('hex');
+      admin.tokens.push(token);
+      await admin.save();
+      return res.json({ success: true, token, username: validUsername });
+    } else {
+      return res.status(401).json({ error: 'Invalid administrator password' });
+    }
+  } catch (err) {
+    return res.status(500).json({ error: 'Server error during authentication' });
   }
 });
 
-app.post('/api/auth/verify', (req, res) => {
-  const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+app.post('/api/auth/verify', async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.json({ authenticated: false });
+    }
+    const token = authHeader.split(' ')[1];
+    const admin = await AdminUserModel.findOne({ tokens: token });
+    return res.json({
+      authenticated: !!admin,
+      username: admin ? admin.username : undefined
+    });
+  } catch (err) {
     return res.json({ authenticated: false });
   }
-  const token = authHeader.split(' ')[1];
-  const db = readDb();
-  const isValid = Array.isArray(db.adminTokens) && db.adminTokens.includes(token);
-  return res.json({
-    authenticated: isValid,
-    username: isValid ? (db.adminUsername || 'admin') : undefined
-  });
 });
 
-app.post('/api/auth/logout', (req, res) => {
-  const authHeader = req.headers.authorization;
-  if (authHeader && authHeader.startsWith('Bearer ')) {
-    const token = authHeader.split(' ')[1];
-    const db = readDb();
-    if (Array.isArray(db.adminTokens)) {
-      db.adminTokens = db.adminTokens.filter(t => t !== token);
-      writeDb(db);
+app.post('/api/auth/logout', async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.split(' ')[1];
+      await AdminUserModel.updateMany({ tokens: token }, { $pull: { tokens: token } });
     }
+    return res.json({ success: true });
+  } catch (err) {
+    return res.json({ success: true });
   }
-  res.json({ success: true });
 });
 
-app.post('/api/auth/change-password', requireAdmin, (req, res) => {
-  const { currentPassword, newUsername, newPassword } = req.body;
-  if (!currentPassword) {
-    return res.status(400).json({ error: 'Current password is required' });
+app.post('/api/auth/change-password', requireAdmin, async (req, res) => {
+  try {
+    const { currentPassword, newUsername, newPassword } = req.body;
+    if (!currentPassword) {
+      return res.status(400).json({ error: 'Current password is required' });
+    }
+    const admin = (req as any).adminUser;
+    if (hashPassword(currentPassword) !== admin.passwordHash) {
+      return res.status(400).json({ error: 'Current password is incorrect' });
+    }
+    if (newUsername && newUsername.trim()) {
+      admin.username = newUsername.trim();
+    }
+    if (newPassword && newPassword.trim()) {
+      admin.passwordHash = hashPassword(newPassword.trim());
+    }
+    await admin.save();
+    return res.json({
+      success: true,
+      message: 'Administrator credentials updated successfully',
+      username: admin.username
+    });
+  } catch (err) {
+    return res.status(500).json({ error: 'Failed to update credentials' });
   }
-  const db = readDb();
-  if (hashPassword(currentPassword) !== db.adminPasswordHash) {
-    return res.status(400).json({ error: 'Current password is incorrect' });
-  }
-  if (newUsername && newUsername.trim()) {
-    db.adminUsername = newUsername.trim();
-  }
-  if (newPassword && newPassword.trim()) {
-    db.adminPasswordHash = hashPassword(newPassword.trim());
-  }
-  writeDb(db);
-  res.json({
-    success: true,
-    message: 'Administrator credentials updated successfully',
-    username: db.adminUsername || 'admin'
-  });
 });
 
 // --- IMAGE UPLOAD ROUTE ---
@@ -293,211 +325,397 @@ app.post('/api/upload', requireAdmin, (req, res) => {
 // --- PUBLIC GUEST INVITATION ROUTES (COMPLETELY ISOLATED) ---
 
 // Get primary / default active event for root route
-app.get('/api/public/primary-event', (req, res) => {
-  const db = readDb();
-  if (db.events.length === 0) {
-    return res.json({ event: null });
-  }
-  const event = db.events[0];
-  return res.json({
-    event: {
-      id: event.id,
-      slug: event.slug,
-      title: event.title,
-      hostNames: event.hostNames,
-      celebrationType: event.celebrationType,
-      date: event.date,
-      time: event.time,
-      venueName: event.venueName,
-      venueAddress: event.venueAddress,
-      googleMapsUrl: event.googleMapsUrl || `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(event.venueAddress || event.venueName)}`,
-      invitationMessage: event.invitationMessage,
-      imageUrl: event.imageUrl,
-      imagePosition: event.imagePosition,
-      imageAspect: event.imageAspect,
-      imageFit: event.imageFit,
-      rsvpDeadline: event.rsvpDeadline
+app.get('/api/public/primary-event', async (req, res) => {
+  try {
+    const event = await EventModel.findOne().sort({ createdAt: 1 });
+    if (!event) {
+      return res.json({ event: null });
     }
-  });
+    return res.json({
+      event: {
+        id: event.id,
+        slug: event.slug,
+        title: event.title,
+        hostNames: event.hostNames,
+        celebrationType: event.celebrationType,
+        date: event.date,
+        time: event.time,
+        venueName: event.venueName,
+        venueAddress: event.venueAddress,
+        googleMapsUrl: event.googleMapsUrl || `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(event.venueAddress || event.venueName)}`,
+        invitationMessage: event.invitationMessage,
+        imageUrl: event.imageUrl,
+        imagePosition: event.imagePosition,
+        imageAspect: event.imageAspect,
+        imageFit: event.imageFit,
+        rsvpDeadline: event.rsvpDeadline
+      }
+    });
+  } catch (err) {
+    return res.status(500).json({ error: 'Error fetching primary event from MongoDB' });
+  }
 });
 
 // Get general invite by slug
-app.get('/api/public/invite/:slug', (req, res) => {
-  const { slug } = req.params;
-  const db = readDb();
-  const event = db.events.find(e => e.slug.toLowerCase() === slug.toLowerCase());
-  if (!event) {
-    return res.status(404).json({ error: 'Event invitation not found' });
-  }
+app.get('/api/public/invite/:slug', async (req, res) => {
+  try {
+    const { slug } = req.params;
+    const event = await EventModel.findOne({ slug: slug.toLowerCase() });
+    if (!event) {
+      return res.status(404).json({ error: 'Event invitation not found' });
+    }
 
-  // Return isolated event information only (NO guest list, NO admin info)
-  return res.json({
-    event: {
-      id: event.id,
-      slug: event.slug,
-      title: event.title,
-      hostNames: event.hostNames,
-      celebrationType: event.celebrationType,
-      date: event.date,
-      time: event.time,
-      venueName: event.venueName,
-      venueAddress: event.venueAddress,
-      googleMapsUrl: event.googleMapsUrl || `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(event.venueAddress || event.venueName)}`,
-      invitationMessage: event.invitationMessage,
-      imageUrl: event.imageUrl,
-      imagePosition: event.imagePosition,
-      imageAspect: event.imageAspect,
-      imageFit: event.imageFit,
-      rsvpDeadline: event.rsvpDeadline
-    },
-    guest: null
-  });
+    return res.json({
+      event: {
+        id: event.id,
+        slug: event.slug,
+        title: event.title,
+        hostNames: event.hostNames,
+        celebrationType: event.celebrationType,
+        date: event.date,
+        time: event.time,
+        venueName: event.venueName,
+        venueAddress: event.venueAddress,
+        googleMapsUrl: event.googleMapsUrl || `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(event.venueAddress || event.venueName)}`,
+        invitationMessage: event.invitationMessage,
+        imageUrl: event.imageUrl,
+        imagePosition: event.imagePosition,
+        imageAspect: event.imageAspect,
+        imageFit: event.imageFit,
+        rsvpDeadline: event.rsvpDeadline
+      },
+      guest: null
+    });
+  } catch (err) {
+    return res.status(500).json({ error: 'Error fetching event invitation from MongoDB' });
+  }
 });
 
 // Get personalized invite by slug + guestCode
-app.get('/api/public/invite/:slug/:guestCode', (req, res) => {
-  const { slug, guestCode } = req.params;
-  const db = readDb();
-  const event = db.events.find(e => e.slug.toLowerCase() === slug.toLowerCase());
-  if (!event) {
-    return res.status(404).json({ error: 'Event invitation not found' });
+app.get('/api/public/invite/:slug/:guestCode', async (req, res) => {
+  try {
+    const { slug, guestCode } = req.params;
+    const event = await EventModel.findOne({ slug: slug.toLowerCase() });
+    if (!event) {
+      return res.status(404).json({ error: 'Event invitation not found' });
+    }
+
+    const guest = await GuestModel.findOne({
+      eventId: event.id,
+      guestCode: guestCode.toUpperCase()
+    });
+
+    return res.json({
+      event: {
+        id: event.id,
+        slug: event.slug,
+        title: event.title,
+        hostNames: event.hostNames,
+        celebrationType: event.celebrationType,
+        date: event.date,
+        time: event.time,
+        venueName: event.venueName,
+        venueAddress: event.venueAddress,
+        googleMapsUrl: event.googleMapsUrl || `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(event.venueAddress || event.venueName)}`,
+        invitationMessage: event.invitationMessage,
+        imageUrl: event.imageUrl,
+        imagePosition: event.imagePosition,
+        imageAspect: event.imageAspect,
+        imageFit: event.imageFit,
+        rsvpDeadline: event.rsvpDeadline
+      },
+      guest: guest
+        ? {
+            id: guest.id,
+            guestCode: guest.guestCode,
+            name: guest.name,
+            mobileNumber: guest.mobileNumber,
+            maxGuests: guest.maxGuests || 2,
+            status: guest.status,
+            attendingCount: guest.attendingCount,
+            notes: guest.notes,
+            dietaryPreferences: guest.dietaryPreferences
+          }
+        : null
+    });
+  } catch (err) {
+    return res.status(500).json({ error: 'Error fetching guest invitation from MongoDB' });
   }
-
-  const guest = db.guests.find(
-    g => g.eventId === event.id && g.guestCode.toLowerCase() === guestCode.toLowerCase()
-  );
-
-  return res.json({
-    event: {
-      id: event.id,
-      slug: event.slug,
-      title: event.title,
-      hostNames: event.hostNames,
-      celebrationType: event.celebrationType,
-      date: event.date,
-      time: event.time,
-      venueName: event.venueName,
-      venueAddress: event.venueAddress,
-      googleMapsUrl: event.googleMapsUrl || `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(event.venueAddress || event.venueName)}`,
-      invitationMessage: event.invitationMessage,
-      imageUrl: event.imageUrl,
-      imagePosition: event.imagePosition,
-      imageAspect: event.imageAspect,
-      imageFit: event.imageFit,
-      rsvpDeadline: event.rsvpDeadline
-    },
-    guest: guest
-      ? {
-          id: guest.id,
-          guestCode: guest.guestCode,
-          name: guest.name,
-          mobileNumber: guest.mobileNumber,
-          maxGuests: guest.maxGuests || 2,
-          status: guest.status,
-          attendingCount: guest.attendingCount,
-          notes: guest.notes,
-          dietaryPreferences: guest.dietaryPreferences
-        }
-      : null
-  });
 });
 
 // Public RSVP Submission
-app.post('/api/public/rsvp', (req, res) => {
-  const {
-    slug,
-    guestCode,
-    name,
-    mobileNumber,
-    status,
-    attendingCount,
-    notes,
-    dietaryPreferences
-  } = req.body;
+app.post('/api/public/rsvp', async (req, res) => {
+  try {
+    const {
+      slug,
+      guestCode,
+      name,
+      mobileNumber,
+      status,
+      attendingCount,
+      notes,
+      dietaryPreferences
+    } = req.body;
 
-  if (!slug || !status || !['attending', 'declined'].includes(status)) {
-    return res.status(400).json({ error: 'Valid event slug and status ("attending" or "declined") required' });
-  }
-
-  const db = readDb();
-  const event = db.events.find(e => e.slug.toLowerCase() === slug.toLowerCase());
-  if (!event) {
-    return res.status(404).json({ error: 'Event not found' });
-  }
-
-  let matchedGuest: GuestItem | undefined;
-
-  if (guestCode) {
-    matchedGuest = db.guests.find(
-      g => g.eventId === event.id && g.guestCode.toLowerCase() === guestCode.toLowerCase()
-    );
-  }
-
-  const maxAllowed = matchedGuest ? (matchedGuest.maxGuests || 6) : 6;
-  const count = status === 'attending' ? Math.min(maxAllowed, Math.max(1, Number(attendingCount) || 1)) : 0;
-
-  if (matchedGuest) {
-    // Update existing personalized guest record
-    matchedGuest.status = status;
-    matchedGuest.attendingCount = count;
-    if (name && name.trim()) matchedGuest.name = name.trim();
-    if (mobileNumber !== undefined) matchedGuest.mobileNumber = mobileNumber.trim();
-    if (notes !== undefined) matchedGuest.notes = notes.trim();
-    if (dietaryPreferences !== undefined) matchedGuest.dietaryPreferences = dietaryPreferences.trim();
-    matchedGuest.updatedAt = new Date().toISOString();
-  } else {
-    // General public guest RSVP submission
-    const cleanName = (name && name.trim()) || 'Attending Guest';
-    let newGuestCode = `G-${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
-    while (db.guests.some(g => g.eventId === event.id && g.guestCode.toUpperCase() === newGuestCode)) {
-      newGuestCode = `G-${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
+    if (!slug || !status || !['attending', 'declined'].includes(status)) {
+      return res.status(400).json({ error: 'Valid event slug and status ("attending" or "declined") required' });
     }
 
-    matchedGuest = {
-      id: `gst-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`,
-      eventId: event.id,
-      guestCode: newGuestCode,
-      name: cleanName,
-      mobileNumber: (mobileNumber || '').trim(),
-      maxGuests: Math.max(count, 2),
-      status: status,
-      attendingCount: count,
-      notes: (notes || '').trim(),
-      dietaryPreferences: (dietaryPreferences || '').trim(),
-      updatedAt: new Date().toISOString()
-    };
-    db.guests.push(matchedGuest);
-  }
-
-  writeDb(db);
-
-  return res.json({
-    success: true,
-    message: status === 'attending' ? 'RSVP received! We look forward to celebrating with you.' : 'Thank you for letting us know. You will be missed!',
-    guest: {
-      id: matchedGuest.id,
-      eventId: matchedGuest.eventId,
-      guestCode: matchedGuest.guestCode,
-      name: matchedGuest.name,
-      mobileNumber: matchedGuest.mobileNumber,
-      maxGuests: matchedGuest.maxGuests,
-      status: matchedGuest.status,
-      attendingCount: matchedGuest.attendingCount,
-      notes: matchedGuest.notes,
-      dietaryPreferences: matchedGuest.dietaryPreferences,
-      updatedAt: matchedGuest.updatedAt
+    const event = await EventModel.findOne({ slug: slug.toLowerCase() });
+    if (!event) {
+      return res.status(404).json({ error: 'Event not found' });
     }
-  });
+
+    let matchedGuest: any = null;
+
+    if (guestCode) {
+      matchedGuest = await GuestModel.findOne({
+        eventId: event.id,
+        guestCode: guestCode.toUpperCase()
+      });
+    }
+
+    const maxAllowed = matchedGuest ? (matchedGuest.maxGuests || 6) : 6;
+    const count = status === 'attending' ? Math.min(maxAllowed, Math.max(1, Number(attendingCount) || 1)) : 0;
+
+    if (matchedGuest) {
+      matchedGuest.status = status;
+      matchedGuest.attendingCount = count;
+      if (name && name.trim()) matchedGuest.name = name.trim();
+      if (mobileNumber !== undefined) matchedGuest.mobileNumber = mobileNumber.trim();
+      if (notes !== undefined) matchedGuest.notes = notes.trim();
+      if (dietaryPreferences !== undefined) matchedGuest.dietaryPreferences = dietaryPreferences.trim();
+      await matchedGuest.save();
+    } else {
+      const cleanName = (name && name.trim()) || 'Attending Guest';
+      let newGuestCode = `G-${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
+      while (await GuestModel.exists({ eventId: event.id, guestCode: newGuestCode })) {
+        newGuestCode = `G-${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
+      }
+
+      matchedGuest = await GuestModel.create({
+        id: `gst-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`,
+        eventId: event.id,
+        guestCode: newGuestCode,
+        name: cleanName,
+        mobileNumber: (mobileNumber || '').trim(),
+        maxGuests: Math.max(count, 2),
+        status: status,
+        attendingCount: count,
+        notes: (notes || '').trim(),
+        dietaryPreferences: (dietaryPreferences || '').trim()
+      });
+    }
+
+    return res.json({
+      success: true,
+      message: status === 'attending' ? 'RSVP received! We look forward to celebrating with you.' : 'Thank you for letting us know. You will be missed!',
+      guest: {
+        id: matchedGuest.id,
+        eventId: matchedGuest.eventId,
+        guestCode: matchedGuest.guestCode,
+        name: matchedGuest.name,
+        mobileNumber: matchedGuest.mobileNumber,
+        maxGuests: matchedGuest.maxGuests,
+        status: matchedGuest.status,
+        attendingCount: matchedGuest.attendingCount,
+        notes: matchedGuest.notes,
+        dietaryPreferences: matchedGuest.dietaryPreferences
+      }
+    });
+  } catch (err) {
+    return res.status(500).json({ error: 'Failed to process RSVP in MongoDB' });
+  }
 });
 
 // --- ADMIN EVENT MANAGEMENT ROUTES ---
 
 // List all events
-app.get('/api/events', requireAdmin, (req, res) => {
-  const db = readDb();
-  // Include metrics summary for each event
-  const eventsWithStats = db.events.map(event => {
-    const guests = db.guests.filter(g => g.eventId === event.id);
+app.get('/api/events', requireAdmin, async (req, res) => {
+  try {
+    const events = await EventModel.find().sort({ createdAt: -1 });
+    const allGuests = await GuestModel.find();
+
+    const eventsWithStats = events.map(event => {
+      const guests = allGuests.filter(g => g.eventId === event.id);
+      const totalInvitees = guests.length;
+      const attendingCount = guests.filter(g => g.status === 'attending').length;
+      const declinedCount = guests.filter(g => g.status === 'declined').length;
+      const pendingCount = guests.filter(g => g.status === 'pending').length;
+      const totalHeadcount = guests
+        .filter(g => g.status === 'attending')
+        .reduce((sum, g) => sum + (g.attendingCount || 1), 0);
+
+      return {
+        ...event.toObject(),
+        stats: {
+          totalInvitees,
+          attendingCount,
+          declinedCount,
+          pendingCount,
+          totalHeadcount
+        }
+      };
+    });
+
+    res.json({ events: eventsWithStats });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch events from MongoDB' });
+  }
+});
+
+// Create event
+app.post('/api/events', requireAdmin, async (req, res) => {
+  try {
+    const {
+      slug,
+      title,
+      hostNames,
+      celebrationType,
+      date,
+      time,
+      venueName,
+      venueAddress,
+      googleMapsUrl,
+      invitationMessage,
+      imageUrl,
+      imagePosition,
+      imageAspect,
+      imageFit,
+      rsvpDeadline
+    } = req.body;
+
+    if (!title || !hostNames || !date) {
+      return res.status(400).json({ error: 'Title, Host Names, and Date are required' });
+    }
+
+    let cleanSlug = (slug || title)
+      .toLowerCase()
+      .trim()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '');
+
+    if (!cleanSlug) cleanSlug = `event-${Date.now()}`;
+
+    if (await EventModel.exists({ slug: cleanSlug })) {
+      cleanSlug = `${cleanSlug}-${crypto.randomBytes(2).toString('hex')}`;
+    }
+
+    const newEvent = await EventModel.create({
+      id: `evt-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`,
+      slug: cleanSlug,
+      title,
+      hostNames,
+      celebrationType: celebrationType || 'Celebration',
+      date,
+      time: time || '5:00 PM',
+      venueName: venueName || '',
+      venueAddress: venueAddress || '',
+      googleMapsUrl: googleMapsUrl || (venueAddress ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(venueAddress)}` : ''),
+      invitationMessage: invitationMessage || 'You are cordially invited to celebrate this memorable occasion with us.',
+      imageUrl: imageUrl || '',
+      imagePosition: imagePosition || 'top',
+      imageAspect: imageAspect || 'auto',
+      imageFit: imageFit || 'cover',
+      rsvpDeadline: rsvpDeadline || ''
+    });
+
+    res.json({ success: true, event: newEvent });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to create event in MongoDB' });
+  }
+});
+
+// Update event
+app.put('/api/events/:id', requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const event = await EventModel.findOne({ id });
+    if (!event) {
+      return res.status(404).json({ error: 'Event not found' });
+    }
+
+    const {
+      slug,
+      title,
+      hostNames,
+      celebrationType,
+      date,
+      time,
+      venueName,
+      venueAddress,
+      googleMapsUrl,
+      invitationMessage,
+      imageUrl,
+      imagePosition,
+      imageAspect,
+      imageFit,
+      rsvpDeadline
+    } = req.body;
+
+    if (slug && slug !== event.slug) {
+      const cleanSlug = slug.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+      const existing = await EventModel.findOne({ slug: cleanSlug, id: { $ne: id } });
+      if (existing) {
+        return res.status(400).json({ error: 'An event with this custom slug already exists' });
+      }
+      event.slug = cleanSlug;
+    }
+
+    if (title !== undefined) event.title = title;
+    if (hostNames !== undefined) event.hostNames = hostNames;
+    if (celebrationType !== undefined) event.celebrationType = celebrationType;
+    if (date !== undefined) event.date = date;
+    if (time !== undefined) event.time = time;
+    if (venueName !== undefined) event.venueName = venueName;
+    if (venueAddress !== undefined) event.venueAddress = venueAddress;
+    if (googleMapsUrl !== undefined) {
+      event.googleMapsUrl = googleMapsUrl;
+    } else if (venueAddress) {
+      event.googleMapsUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(venueAddress)}`;
+    }
+    if (invitationMessage !== undefined) event.invitationMessage = invitationMessage;
+    if (imageUrl !== undefined) event.imageUrl = imageUrl;
+    if (imagePosition !== undefined) event.imagePosition = imagePosition;
+    if (imageAspect !== undefined) event.imageAspect = imageAspect;
+    if (imageFit !== undefined) event.imageFit = imageFit;
+    if (rsvpDeadline !== undefined) event.rsvpDeadline = rsvpDeadline;
+
+    await event.save();
+    res.json({ success: true, event });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to update event in MongoDB' });
+  }
+});
+
+// Delete event
+app.delete('/api/events/:id', requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const deletedEvent = await EventModel.findOneAndDelete({ id });
+    if (!deletedEvent) {
+      return res.status(404).json({ error: 'Event not found' });
+    }
+
+    await GuestModel.deleteMany({ eventId: id });
+    res.json({ success: true, message: 'Event and associated guests deleted from MongoDB' });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to delete event from MongoDB' });
+  }
+});
+
+// --- ADMIN GUEST LIST & RSVP TRACKER ROUTES ---
+
+// Get guests and metrics for an event
+app.get('/api/events/:id/guests', requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const event = await EventModel.findOne({ id });
+    if (!event) {
+      return res.status(404).json({ error: 'Event not found' });
+    }
+
+    const guests = await GuestModel.find({ eventId: id }).sort({ createdAt: -1 });
     const totalInvitees = guests.length;
     const attendingCount = guests.filter(g => g.status === 'attending').length;
     const declinedCount = guests.filter(g => g.status === 'declined').length;
@@ -506,334 +724,163 @@ app.get('/api/events', requireAdmin, (req, res) => {
       .filter(g => g.status === 'attending')
       .reduce((sum, g) => sum + (g.attendingCount || 1), 0);
 
-    return {
-      ...event,
-      stats: {
+    res.json({
+      event,
+      guests,
+      metrics: {
         totalInvitees,
         attendingCount,
         declinedCount,
         pendingCount,
         totalHeadcount
       }
-    };
-  });
-
-  res.json({ events: eventsWithStats });
-});
-
-// Create event
-app.post('/api/events', requireAdmin, (req, res) => {
-  const {
-    slug,
-    title,
-    hostNames,
-    celebrationType,
-    date,
-    time,
-    venueName,
-    venueAddress,
-    googleMapsUrl,
-    invitationMessage,
-    imageUrl,
-    imagePosition,
-    imageAspect,
-    imageFit,
-    rsvpDeadline
-  } = req.body;
-
-  if (!title || !hostNames || !date) {
-    return res.status(400).json({ error: 'Title, Host Names, and Date are required' });
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch guests from MongoDB' });
   }
-
-  const db = readDb();
-  let cleanSlug = (slug || title)
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
-
-  if (!cleanSlug) cleanSlug = `event-${Date.now()}`;
-
-  // Check unique slug
-  if (db.events.some(e => e.slug.toLowerCase() === cleanSlug.toLowerCase())) {
-    cleanSlug = `${cleanSlug}-${crypto.randomBytes(2).toString('hex')}`;
-  }
-
-  const newEvent: EventItem = {
-    id: `evt-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`,
-    slug: cleanSlug,
-    title,
-    hostNames,
-    celebrationType: celebrationType || 'Celebration',
-    date,
-    time: time || '5:00 PM',
-    venueName: venueName || '',
-    venueAddress: venueAddress || '',
-    googleMapsUrl: googleMapsUrl || (venueAddress ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(venueAddress)}` : ''),
-    invitationMessage: invitationMessage || 'You are cordially invited to celebrate this memorable occasion with us.',
-    imageUrl: imageUrl || '',
-    imagePosition: imagePosition || 'top',
-    imageAspect: imageAspect || 'auto',
-    imageFit: imageFit || 'cover',
-    rsvpDeadline: rsvpDeadline || '',
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString()
-  };
-
-  db.events.push(newEvent);
-  writeDb(db);
-
-  res.json({ success: true, event: newEvent });
-});
-
-// Update event
-app.put('/api/events/:id', requireAdmin, (req, res) => {
-  const { id } = req.params;
-  const db = readDb();
-  const event = db.events.find(e => e.id === id);
-  if (!event) {
-    return res.status(404).json({ error: 'Event not found' });
-  }
-
-  const {
-    slug,
-    title,
-    hostNames,
-    celebrationType,
-    date,
-    time,
-    venueName,
-    venueAddress,
-    googleMapsUrl,
-    invitationMessage,
-    imageUrl,
-    imagePosition,
-    imageAspect,
-    imageFit,
-    rsvpDeadline
-  } = req.body;
-
-  if (slug && slug !== event.slug) {
-    const cleanSlug = slug.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-    if (db.events.some(e => e.id !== id && e.slug.toLowerCase() === cleanSlug.toLowerCase())) {
-      return res.status(400).json({ error: 'An event with this custom slug already exists' });
-    }
-    event.slug = cleanSlug;
-  }
-
-  if (title !== undefined) event.title = title;
-  if (hostNames !== undefined) event.hostNames = hostNames;
-  if (celebrationType !== undefined) event.celebrationType = celebrationType;
-  if (date !== undefined) event.date = date;
-  if (time !== undefined) event.time = time;
-  if (venueName !== undefined) event.venueName = venueName;
-  if (venueAddress !== undefined) event.venueAddress = venueAddress;
-  if (googleMapsUrl !== undefined) {
-    event.googleMapsUrl = googleMapsUrl;
-  } else if (venueAddress) {
-    event.googleMapsUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(venueAddress)}`;
-  }
-  if (invitationMessage !== undefined) event.invitationMessage = invitationMessage;
-  if (imageUrl !== undefined) event.imageUrl = imageUrl;
-  if (imagePosition !== undefined) event.imagePosition = imagePosition;
-  if (imageAspect !== undefined) event.imageAspect = imageAspect;
-  if (imageFit !== undefined) event.imageFit = imageFit;
-  if (rsvpDeadline !== undefined) event.rsvpDeadline = rsvpDeadline;
-  event.updatedAt = new Date().toISOString();
-
-  writeDb(db);
-  res.json({ success: true, event });
-});
-
-// Delete event
-app.delete('/api/events/:id', requireAdmin, (req, res) => {
-  const { id } = req.params;
-  const db = readDb();
-  const eventIndex = db.events.findIndex(e => e.id === id);
-  if (eventIndex === -1) {
-    return res.status(404).json({ error: 'Event not found' });
-  }
-
-  db.events.splice(eventIndex, 1);
-  // Also remove guests for this event
-  db.guests = db.guests.filter(g => g.eventId !== id);
-  writeDb(db);
-
-  res.json({ success: true, message: 'Event and associated guests deleted' });
-});
-
-// --- ADMIN GUEST LIST & RSVP TRACKER ROUTES ---
-
-// Get guests and metrics for an event
-app.get('/api/events/:id/guests', requireAdmin, (req, res) => {
-  const { id } = req.params;
-  const db = readDb();
-  const event = db.events.find(e => e.id === id);
-  if (!event) {
-    return res.status(404).json({ error: 'Event not found' });
-  }
-
-  const guests = db.guests.filter(g => g.eventId === id);
-  const totalInvitees = guests.length;
-  const attendingCount = guests.filter(g => g.status === 'attending').length;
-  const declinedCount = guests.filter(g => g.status === 'declined').length;
-  const pendingCount = guests.filter(g => g.status === 'pending').length;
-  const totalHeadcount = guests
-    .filter(g => g.status === 'attending')
-    .reduce((sum, g) => sum + (g.attendingCount || 1), 0);
-
-  res.json({
-    event,
-    guests,
-    metrics: {
-      totalInvitees,
-      attendingCount,
-      declinedCount,
-      pendingCount,
-      totalHeadcount
-    }
-  });
 });
 
 // Add guest to event
-app.post('/api/events/:id/guests', requireAdmin, (req, res) => {
-  const { id } = req.params;
-  const { name, mobileNumber, maxGuests, customCode, notes } = req.body;
+app.post('/api/events/:id/guests', requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, mobileNumber, maxGuests, customCode, notes } = req.body;
 
-  if (!name || !name.trim()) {
-    return res.status(400).json({ error: 'Guest name is required' });
+    if (!name || !name.trim()) {
+      return res.status(400).json({ error: 'Guest name is required' });
+    }
+
+    const event = await EventModel.findOne({ id });
+    if (!event) {
+      return res.status(404).json({ error: 'Event not found' });
+    }
+
+    let guestCode = customCode ? customCode.trim().toUpperCase() : `G-${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
+    while (await GuestModel.exists({ eventId: id, guestCode })) {
+      guestCode = `G-${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
+    }
+
+    const newGuest = await GuestModel.create({
+      id: `gst-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`,
+      eventId: id,
+      guestCode,
+      name: name.trim(),
+      mobileNumber: (mobileNumber || '').trim(),
+      maxGuests: Math.max(1, Number(maxGuests) || 2),
+      status: 'pending',
+      attendingCount: 0,
+      notes: (notes || '').trim(),
+      dietaryPreferences: ''
+    });
+
+    res.json({ success: true, guest: newGuest });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to create guest in MongoDB' });
   }
-
-  const db = readDb();
-  const event = db.events.find(e => e.id === id);
-  if (!event) {
-    return res.status(404).json({ error: 'Event not found' });
-  }
-
-  let guestCode = customCode ? customCode.trim().toUpperCase() : `G-${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
-  // Ensure unique code per event
-  if (db.guests.some(g => g.eventId === id && g.guestCode.toUpperCase() === guestCode)) {
-    guestCode = `G-${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
-  }
-
-  const newGuest: GuestItem = {
-    id: `gst-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`,
-    eventId: id,
-    guestCode,
-    name: name.trim(),
-    mobileNumber: (mobileNumber || '').trim(),
-    maxGuests: Math.max(1, Number(maxGuests) || 2),
-    status: 'pending',
-    attendingCount: 0,
-    notes: (notes || '').trim(),
-    dietaryPreferences: '',
-    updatedAt: new Date().toISOString()
-  };
-
-  db.guests.push(newGuest);
-  writeDb(db);
-
-  res.json({ success: true, guest: newGuest });
 });
 
 // Update guest
-app.put('/api/events/:id/guests/:guestId', requireAdmin, (req, res) => {
-  const { id, guestId } = req.params;
-  const { name, mobileNumber, maxGuests, guestCode, status, attendingCount, notes, dietaryPreferences } = req.body;
+app.put('/api/events/:id/guests/:guestId', requireAdmin, async (req, res) => {
+  try {
+    const { id, guestId } = req.params;
+    const { name, mobileNumber, maxGuests, guestCode, status, attendingCount, notes, dietaryPreferences } = req.body;
 
-  const db = readDb();
-  const guest = db.guests.find(g => g.id === guestId && g.eventId === id);
-  if (!guest) {
-    return res.status(404).json({ error: 'Guest record not found' });
-  }
-
-  if (name !== undefined) guest.name = name.trim();
-  if (mobileNumber !== undefined) guest.mobileNumber = mobileNumber.trim();
-  if (maxGuests !== undefined) guest.maxGuests = Math.max(1, Number(maxGuests) || 1);
-  if (guestCode && guestCode !== guest.guestCode) {
-    const cleanCode = guestCode.trim().toUpperCase();
-    if (db.guests.some(g => g.eventId === id && g.id !== guestId && g.guestCode.toUpperCase() === cleanCode)) {
-      return res.status(400).json({ error: 'Guest code already in use for this event' });
+    const guest = await GuestModel.findOne({ id: guestId, eventId: id });
+    if (!guest) {
+      return res.status(404).json({ error: 'Guest record not found' });
     }
-    guest.guestCode = cleanCode;
-  }
-  if (status !== undefined && ['pending', 'attending', 'declined'].includes(status)) {
-    guest.status = status;
-    if (status === 'declined') {
-      guest.attendingCount = 0;
-    }
-  }
-  if (attendingCount !== undefined) {
-    guest.attendingCount = Math.max(0, Number(attendingCount) || 0);
-  }
-  if (notes !== undefined) guest.notes = notes;
-  if (dietaryPreferences !== undefined) guest.dietaryPreferences = dietaryPreferences;
-  guest.updatedAt = new Date().toISOString();
 
-  writeDb(db);
-  res.json({ success: true, guest });
+    if (name !== undefined) guest.name = name.trim();
+    if (mobileNumber !== undefined) guest.mobileNumber = mobileNumber.trim();
+    if (maxGuests !== undefined) guest.maxGuests = Math.max(1, Number(maxGuests) || 1);
+    if (guestCode && guestCode !== guest.guestCode) {
+      const cleanCode = guestCode.trim().toUpperCase();
+      const existing = await GuestModel.findOne({ eventId: id, id: { $ne: guestId }, guestCode: cleanCode });
+      if (existing) {
+        return res.status(400).json({ error: 'Guest code already in use for this event' });
+      }
+      guest.guestCode = cleanCode;
+    }
+    if (status !== undefined && ['pending', 'attending', 'declined'].includes(status)) {
+      guest.status = status as any;
+      if (status === 'declined') {
+        guest.attendingCount = 0;
+      }
+    }
+    if (attendingCount !== undefined) {
+      guest.attendingCount = Math.max(0, Number(attendingCount) || 0);
+    }
+    if (notes !== undefined) guest.notes = notes;
+    if (dietaryPreferences !== undefined) guest.dietaryPreferences = dietaryPreferences;
+
+    await guest.save();
+    res.json({ success: true, guest });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to update guest in MongoDB' });
+  }
 });
 
 // Delete guest
-app.delete('/api/events/:id/guests/:guestId', requireAdmin, (req, res) => {
-  const { id, guestId } = req.params;
-  const db = readDb();
-  const index = db.guests.findIndex(g => g.id === guestId && g.eventId === id);
-  if (index === -1) {
-    return res.status(404).json({ error: 'Guest not found' });
-  }
+app.delete('/api/events/:id/guests/:guestId', requireAdmin, async (req, res) => {
+  try {
+    const { id, guestId } = req.params;
+    const deleted = await GuestModel.findOneAndDelete({ id: guestId, eventId: id });
+    if (!deleted) {
+      return res.status(404).json({ error: 'Guest not found' });
+    }
 
-  db.guests.splice(index, 1);
-  writeDb(db);
-  res.json({ success: true, message: 'Guest deleted' });
+    res.json({ success: true, message: 'Guest deleted from MongoDB' });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to delete guest from MongoDB' });
+  }
 });
 
 // CSV Import guests
-app.post('/api/events/:id/guests/import', requireAdmin, (req, res) => {
-  const { id } = req.params;
-  const { guests } = req.body;
+app.post('/api/events/:id/guests/import', requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { guests } = req.body;
 
-  if (!Array.isArray(guests) || guests.length === 0) {
-    return res.status(400).json({ error: 'No guest records provided' });
-  }
-
-  const db = readDb();
-  const event = db.events.find(e => e.id === id);
-  if (!event) {
-    return res.status(404).json({ error: 'Event not found' });
-  }
-
-  const addedGuests: GuestItem[] = [];
-
-  for (const item of guests) {
-    const name = item.name ? String(item.name).trim() : '';
-    if (!name) continue;
-
-    let code = item.guestCode ? String(item.guestCode).trim().toUpperCase() : '';
-    if (!code || db.guests.some(g => g.eventId === id && g.guestCode.toUpperCase() === code)) {
-      code = `G-${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
+    if (!Array.isArray(guests) || guests.length === 0) {
+      return res.status(400).json({ error: 'No guest records provided' });
     }
 
-    const newGuest: GuestItem = {
-      id: `gst-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`,
-      eventId: id,
-      guestCode: code,
-      name,
-      mobileNumber: item.mobileNumber ? String(item.mobileNumber).trim() : '',
-      maxGuests: Math.max(1, Number(item.maxGuests) || 2),
-      status: item.status && ['pending', 'attending', 'declined'].includes(item.status) ? item.status : 'pending',
-      attendingCount: Number(item.attendingCount) || 0,
-      notes: item.notes ? String(item.notes).trim() : '',
-      dietaryPreferences: item.dietaryPreferences ? String(item.dietaryPreferences).trim() : '',
-      updatedAt: new Date().toISOString()
-    };
+    const event = await EventModel.findOne({ id });
+    if (!event) {
+      return res.status(404).json({ error: 'Event not found' });
+    }
 
-    db.guests.push(newGuest);
-    addedGuests.push(newGuest);
+    const addedGuests: any[] = [];
+
+    for (const item of guests) {
+      const name = item.name ? String(item.name).trim() : '';
+      if (!name) continue;
+
+      let code = item.guestCode ? String(item.guestCode).trim().toUpperCase() : '';
+      if (!code || await GuestModel.exists({ eventId: id, guestCode: code })) {
+        code = `G-${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
+      }
+
+      const newGuest = await GuestModel.create({
+        id: `gst-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`,
+        eventId: id,
+        guestCode: code,
+        name,
+        mobileNumber: item.mobileNumber ? String(item.mobileNumber).trim() : '',
+        maxGuests: Math.max(1, Number(item.maxGuests) || 2),
+        status: item.status && ['pending', 'attending', 'declined'].includes(item.status) ? item.status : 'pending',
+        attendingCount: Number(item.attendingCount) || 0,
+        notes: item.notes ? String(item.notes).trim() : '',
+        dietaryPreferences: item.dietaryPreferences ? String(item.dietaryPreferences).trim() : ''
+      });
+
+      addedGuests.push(newGuest);
+    }
+
+    res.json({ success: true, count: addedGuests.length, guests: addedGuests });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to import guests to MongoDB' });
   }
-
-  writeDb(db);
-  res.json({ success: true, count: addedGuests.length, guests: addedGuests });
 });
 
 // 404 handler for API routes
