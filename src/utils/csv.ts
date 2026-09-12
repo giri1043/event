@@ -20,7 +20,7 @@ export function exportGuestsToCSV(guests: GuestItem[], eventTitle: string) {
   
   const link = document.createElement('a');
   link.setAttribute('href', url);
-  const cleanTitle = eventTitle.toLowerCase().replace(/[^a-z0-9]/g, '_');
+  const cleanTitle = (eventTitle || 'event').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
   link.setAttribute('download', `guests_${cleanTitle}_${new Date().toISOString().slice(0, 10)}.csv`);
   document.body.appendChild(link);
   link.click();
