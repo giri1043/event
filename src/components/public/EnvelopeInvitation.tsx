@@ -203,7 +203,7 @@ export const EnvelopeInvitation: React.FC<EnvelopeInvitationProps> = ({
 
   // Google Calendar Add Event link
   const makeCalendarUrl = () => {
-    const text = encodeURIComponent(event.title);
+    const text = encodeURIComponent(event.title || event.hostNames);
     const details = encodeURIComponent(
       `${event.invitationMessage}\n\nHosted by: ${event.hostNames}`
     );
@@ -452,9 +452,11 @@ export const EnvelopeInvitation: React.FC<EnvelopeInvitationProps> = ({
                 </div>
 
                 {/* Celebration Title */}
-                <h2 className="font-serif text-xl sm:text-2xl text-[#534335] italic font-normal">
-                  {event.title}
-                </h2>
+                {event.title && (
+                  <h2 className="font-serif text-xl sm:text-2xl text-[#534335] italic font-normal">
+                    {event.title}
+                  </h2>
+                )}
 
                 {/* Warm Invitation Message */}
                 <div className="mt-5 max-w-md text-[#665646] text-sm sm:text-base leading-relaxed font-light px-2">
@@ -485,7 +487,7 @@ export const EnvelopeInvitation: React.FC<EnvelopeInvitationProps> = ({
                     )}
                     <img
                       src={event.imageUrl}
-                      alt={event.title}
+                      alt={event.title || event.hostNames}
                       referrerPolicy="no-referrer"
                       onLoad={(e) => {
                         setPhotoLoaded(true);
@@ -911,9 +913,11 @@ export const EnvelopeInvitation: React.FC<EnvelopeInvitationProps> = ({
               <p className="text-white font-serif text-base">
                 {event.hostNames}
               </p>
-              <p className="text-white/70 font-sans text-xs tracking-wider uppercase">
-                {event.title}
-              </p>
+              {event.title && (
+                <p className="text-white/70 font-sans text-xs tracking-wider uppercase">
+                  {event.title}
+                </p>
+              )}
             </div>
           </div>
         </div>
