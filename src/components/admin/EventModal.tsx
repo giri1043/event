@@ -97,8 +97,8 @@ export const EventModal: React.FC<EventModalProps> = ({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!title.trim() || !hostNames.trim() || !date) {
-      setError('Title, Host Names, and Date are required.');
+    if (!hostNames.trim() || !date) {
+      setError('Host Names and Date are required.');
       return;
     }
 
@@ -185,11 +185,10 @@ export const EventModal: React.FC<EventModalProps> = ({
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-semibold uppercase tracking-wider text-[#695642] mb-1">
-                Celebration Title *
+                Celebration Title
               </label>
               <input
                 type="text"
-                required
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
                 placeholder="e.g. Annual Gala & Celebration"
