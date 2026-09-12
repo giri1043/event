@@ -11,7 +11,8 @@ export interface EventItem {
   googleMapsUrl?: string;
   invitationMessage: string;
   imageUrl?: string;
-  imageSource?: 'upload' | 'url';
+  imageSource?: 'upload' | 'url' | 'google_drive';
+  googleDriveFileId?: string;
   imagePosition?: 'top' | 'center' | 'bottom';
   imageAspect?: 'auto' | 'portrait' | 'landscape' | 'square';
   imageFit?: 'cover' | 'contain' | 'natural';
