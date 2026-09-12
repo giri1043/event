@@ -366,10 +366,8 @@ app.post('/api/public/rsvp', (req, res) => {
   } = req.body;
 
   if (!slug || !status || !['attending', 'declined'].includes(status)) {
-    return res.status(400).json({ error: 'Valid slug and status ("attending" or "declined") required' });
+    return res.status(400).json({ error: 'Valid event slug and status ("attending" or "declined") required' });
   }
-
-  const count = status === 'attending' ? Math.max(1, Number(attendingCount) || 1) : 0;
 
   const db = readDb();
   const event = db.events.find(e => e.slug.toLowerCase() === slug.toLowerCase());
@@ -385,28 +383,37 @@ app.post('/api/public/rsvp', (req, res) => {
     );
   }
 
+  const maxAllowed = matchedGuest ? (matchedGuest.maxGuests || 6) : 6;
+  const count = status === 'attending' ? Math.min(maxAllowed, Math.max(1, Number(attendingCount) || 1)) : 0;
+
   if (matchedGuest) {
     // Update existing personalized guest record
     matchedGuest.status = status;
     matchedGuest.attendingCount = count;
-    if (notes !== undefined) matchedGuest.notes = notes;
-    if (dietaryPreferences !== undefined) matchedGuest.dietaryPreferences = dietaryPreferences;
+    if (name && name.trim()) matchedGuest.name = name.trim();
+    if (mobileNumber !== undefined) matchedGuest.mobileNumber = mobileNumber.trim();
+    if (notes !== undefined) matchedGuest.notes = notes.trim();
+    if (dietaryPreferences !== undefined) matchedGuest.dietaryPreferences = dietaryPreferences.trim();
     matchedGuest.updatedAt = new Date().toISOString();
   } else {
-    // General guest RSVP submission
+    // General public guest RSVP submission
     const cleanName = (name && name.trim()) || 'Attending Guest';
-    const newGuestCode = `G-${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
+    let newGuestCode = `G-${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
+    if (db.guests.some(g => g.eventId === event.id && g.guestCode.toUpperCase() === newGuestCode)) {
+      newGuestCode = `G-${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
+    }
+
     matchedGuest = {
       id: `gst-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`,
       eventId: event.id,
       guestCode: newGuestCode,
       name: cleanName,
-      mobileNumber: mobileNumber || '',
+      mobileNumber: (mobileNumber || '').trim(),
       maxGuests: Math.max(count, 2),
       status: status,
       attendingCount: count,
-      notes: notes || '',
-      dietaryPreferences: dietaryPreferences || '',
+      notes: (notes || '').trim(),
+      dietaryPreferences: (dietaryPreferences || '').trim(),
       updatedAt: new Date().toISOString()
     };
     db.guests.push(matchedGuest);
@@ -419,12 +426,16 @@ app.post('/api/public/rsvp', (req, res) => {
     message: status === 'attending' ? 'RSVP received! We look forward to celebrating with you.' : 'Thank you for letting us know. You will be missed!',
     guest: {
       id: matchedGuest.id,
+      eventId: matchedGuest.eventId,
       guestCode: matchedGuest.guestCode,
       name: matchedGuest.name,
+      mobileNumber: matchedGuest.mobileNumber,
+      maxGuests: matchedGuest.maxGuests,
       status: matchedGuest.status,
       attendingCount: matchedGuest.attendingCount,
       notes: matchedGuest.notes,
-      dietaryPreferences: matchedGuest.dietaryPreferences
+      dietaryPreferences: matchedGuest.dietaryPreferences,
+      updatedAt: matchedGuest.updatedAt
     }
   });
 });
