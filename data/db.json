@@ -1,0 +1,41 @@
+{
+  "adminPasswordHash": "240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9",
+  "events": [
+    {
+      "id": "evt-1789140501086-bdbcce",
+      "slug": "sharada-arman-reception",
+      "title": "RECEPTION",
+      "hostNames": "Sharada & Arman",
+      "celebrationType": "RECEPTION",
+      "date": "2027-01-31",
+      "time": "9:00 AM",
+      "venueName": "ACCORD METROPOLITAN",
+      "venueAddress": "ACCORD METROPOLITAN T Nagar, Chennai",
+      "googleMapsUrl": "",
+      "invitationMessage": "Together with our families, we invite you to join us in celebrating our special day with an evening of dinner, music, and joy.",
+      "imageUrl": "/uploads/photo-1789140594419-8bc057da.jpg",
+      "imagePosition": "top",
+      "imageAspect": "portrait",
+      "imageFit": "cover",
+      "rsvpDeadline": "2026-12-31",
+      "createdAt": "2026-09-11T15:28:21.087Z",
+      "updatedAt": "2026-09-11T15:29:56.235Z"
+    }
+  ],
+  "guests": [
+    {
+      "id": "gst-1789140630835-2c8f05",
+      "eventId": "evt-1789140501086-bdbcce",
+      "guestCode": "G-E5BF0C",
+      "name": "GV",
+      "mobileNumber": "94889938433",
+      "maxGuests": 2,
+      "status": "attending",
+      "attendingCount": 1,
+      "notes": "",
+      "dietaryPreferences": "",
+      "updatedAt": "2026-09-11T15:30:30.835Z"
+    }
+  ],
+  "adminUsername": "admin"
+}

@@ -1,0 +1,6 @@
+{
+  "name": "Digital Event Invitation & RSVP Management",
+  "description": "Full-stack digital event invitation and RSVP management system featuring interactive 3D envelope opening animations, personalized guest invites, instant RSVP flow with headcounts, and host admin dashboard.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
