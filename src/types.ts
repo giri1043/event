@@ -11,6 +11,7 @@ export interface EventItem {
   googleMapsUrl?: string;
   invitationMessage: string;
   imageUrl?: string;
+  imageSource?: 'upload' | 'url';
   imagePosition?: 'top' | 'center' | 'bottom';
   imageAspect?: 'auto' | 'portrait' | 'landscape' | 'square';
   imageFit?: 'cover' | 'contain' | 'natural';
