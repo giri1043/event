@@ -852,8 +852,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ token, onLogout 
         isOpen={isEventModalOpen}
         onClose={() => setIsEventModalOpen(false)}
         eventToEdit={eventToEdit}
-        onSave={() => {
+        onSave={(savedEvent) => {
           fetchEvents();
+          if (savedEvent && savedEvent.id) {
+            setCurrentEventId(savedEvent.id);
+          }
         }}
         onDelete={(eventId, title) => {
           requestDeleteEvent(eventId, title);
