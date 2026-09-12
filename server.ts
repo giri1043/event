@@ -20,12 +20,13 @@ if (!fs.existsSync(UPLOADS_DIR)) {
   fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 }
 
-// MongoDB Connection
+// MongoDB Connection & Database Name Configuration
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://giridha1043_db_user:fKlSyoi5LTc8CVhf@ac-7mjxnjl-shard-00-00.pw6tzia.mongodb.net:27017,ac-7mjxnjl-shard-00-01.pw6tzia.mongodb.net:27017,ac-7mjxnjl-shard-00-02.pw6tzia.mongodb.net:27017/dwrs?ssl=true&authSource=admin&retryWrites=true&w=majority';
+const DB_NAME = process.env.MONGODB_DB_NAME || 'event';
 
-mongoose.connect(MONGODB_URI)
+mongoose.connect(MONGODB_URI, { dbName: DB_NAME })
   .then(() => {
-    console.log(`Connected to MongoDB Atlas successfully: ${MONGODB_URI.split('@').pop()}`);
+    console.log(`Connected to MongoDB Atlas database "${DB_NAME}" successfully`);
     seedFromLegacyFileIfNeeded();
   })
   .catch((err) => {
