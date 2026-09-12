@@ -58,6 +58,7 @@ export interface GuestItem {
 interface DatabaseSchema {
   adminUsername?: string;
   adminPasswordHash: string;
+  adminTokens?: string[];
   events: EventItem[];
   guests: GuestItem[];
 }
@@ -66,46 +67,88 @@ function hashPassword(pwd: string): string {
   return crypto.createHash('sha256').update(pwd).digest('hex');
 }
 
-// Read database
+// Read database with fallback to backup file to prevent data loss
 function readDb(): DatabaseSchema {
   const defaultAdminUser = process.env.ADMIN_USERNAME || 'admin';
   const defaultAdminPass = process.env.ADMIN_PASSWORD || 'admin123';
+  const bakFile = `${DB_FILE}.bak`;
 
-  try {
-    if (fs.existsSync(DB_FILE)) {
+  const validateAndFormatData = (parsed: any): DatabaseSchema | null => {
+    if (!parsed || typeof parsed !== 'object') return null;
+    if (!parsed.adminUsername) parsed.adminUsername = defaultAdminUser;
+    if (!parsed.adminPasswordHash) parsed.adminPasswordHash = hashPassword(defaultAdminPass);
+    if (!Array.isArray(parsed.adminTokens)) parsed.adminTokens = [];
+    if (!Array.isArray(parsed.events)) parsed.events = [];
+    if (!Array.isArray(parsed.guests)) parsed.guests = [];
+    return parsed as DatabaseSchema;
+  };
+
+  if (fs.existsSync(DB_FILE)) {
+    try {
       const raw = fs.readFileSync(DB_FILE, 'utf-8');
       const parsed = JSON.parse(raw);
-      if (!parsed.adminUsername) {
-        parsed.adminUsername = defaultAdminUser;
-      }
-      if (!Array.isArray(parsed.events)) {
-        parsed.events = [];
-      }
-      if (!Array.isArray(parsed.guests)) {
-        parsed.guests = [];
-      }
-      return parsed;
+      const formatted = validateAndFormatData(parsed);
+      if (formatted) return formatted;
+    } catch (err) {
+      console.error('Error reading primary db.json file:', err);
     }
-  } catch (err) {
-    console.error('Error reading db.json, reinitializing...', err);
+
+    // Try reading backup file if primary file read/parse failed
+    if (fs.existsSync(bakFile)) {
+      try {
+        console.warn('Attempting to recover database from backup db.json.bak...');
+        const bakRaw = fs.readFileSync(bakFile, 'utf-8');
+        const parsedBak = JSON.parse(bakRaw);
+        const formattedBak = validateAndFormatData(parsedBak);
+        if (formattedBak) {
+          writeDb(formattedBak);
+          return formattedBak;
+        }
+      } catch (err) {
+        console.error('Error reading backup db.json.bak:', err);
+      }
+    }
+    console.error('CRITICAL: DB file exists but could not be parsed. Preserving existing file.');
   }
 
-  // Initial fresh database with zero mock or sample data
+  // Initial fresh database only if DB_FILE did not exist
   const initialDb: DatabaseSchema = {
     adminUsername: defaultAdminUser,
     adminPasswordHash: hashPassword(defaultAdminPass),
+    adminTokens: [],
     events: [],
     guests: []
   };
 
-  writeDb(initialDb);
+  if (!fs.existsSync(DB_FILE)) {
+    writeDb(initialDb);
+  }
   return initialDb;
 }
 
-// Write database atomically
+// Write database atomically with rolling backup
 function writeDb(db: DatabaseSchema) {
   const tempFile = `${DB_FILE}.tmp`;
+  const bakFile = `${DB_FILE}.bak`;
+
+  // Always retain backup array fields
+  if (!Array.isArray(db.adminTokens)) db.adminTokens = [];
+  if (!Array.isArray(db.events)) db.events = [];
+  if (!Array.isArray(db.guests)) db.guests = [];
+
+  // Write to temporary file
   fs.writeFileSync(tempFile, JSON.stringify(db, null, 2), 'utf-8');
+
+  // Maintain backup copy of DB_FILE before overwriting
+  if (fs.existsSync(DB_FILE)) {
+    try {
+      fs.copyFileSync(DB_FILE, bakFile);
+    } catch (err) {
+      console.warn('Could not update db.json.bak:', err);
+    }
+  }
+
+  // Replace primary DB file
   fs.renameSync(tempFile, DB_FILE);
 }
 
@@ -128,16 +171,15 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 // Static uploads serving
 app.use('/uploads', express.static(UPLOADS_DIR));
 
-// Simple in-memory session tokens for admin auth
-const activeAdminTokens = new Set<string>();
-
+// Database-backed admin token authentication middleware
 function requireAdmin(req: express.Request, res: express.Response, next: express.NextFunction) {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     return res.status(401).json({ error: 'Unauthorized. Admin credentials required.' });
   }
   const token = authHeader.split(' ')[1];
-  if (!activeAdminTokens.has(token)) {
+  const db = readDb();
+  if (!db.adminTokens || !db.adminTokens.includes(token)) {
     return res.status(401).json({ error: 'Session expired or invalid.' });
   }
   next();
@@ -160,7 +202,11 @@ app.post('/api/auth/login', (req, res) => {
 
   if (hashPassword(password) === db.adminPasswordHash) {
     const token = crypto.randomBytes(32).toString('hex');
-    activeAdminTokens.add(token);
+    if (!Array.isArray(db.adminTokens)) {
+      db.adminTokens = [];
+    }
+    db.adminTokens.push(token);
+    writeDb(db);
     return res.json({ success: true, token, username: validUsername });
   } else {
     return res.status(401).json({ error: 'Invalid administrator password' });
@@ -173,8 +219,8 @@ app.post('/api/auth/verify', (req, res) => {
     return res.json({ authenticated: false });
   }
   const token = authHeader.split(' ')[1];
-  const isValid = activeAdminTokens.has(token);
   const db = readDb();
+  const isValid = Array.isArray(db.adminTokens) && db.adminTokens.includes(token);
   return res.json({
     authenticated: isValid,
     username: isValid ? (db.adminUsername || 'admin') : undefined
@@ -185,7 +231,11 @@ app.post('/api/auth/logout', (req, res) => {
   const authHeader = req.headers.authorization;
   if (authHeader && authHeader.startsWith('Bearer ')) {
     const token = authHeader.split(' ')[1];
-    activeAdminTokens.delete(token);
+    const db = readDb();
+    if (Array.isArray(db.adminTokens)) {
+      db.adminTokens = db.adminTokens.filter(t => t !== token);
+      writeDb(db);
+    }
   }
   res.json({ success: true });
 });
@@ -399,7 +449,7 @@ app.post('/api/public/rsvp', (req, res) => {
     // General public guest RSVP submission
     const cleanName = (name && name.trim()) || 'Attending Guest';
     let newGuestCode = `G-${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
-    if (db.guests.some(g => g.eventId === event.id && g.guestCode.toUpperCase() === newGuestCode)) {
+    while (db.guests.some(g => g.eventId === event.id && g.guestCode.toUpperCase() === newGuestCode)) {
       newGuestCode = `G-${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
     }
 
