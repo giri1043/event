@@ -47,6 +47,7 @@ export interface EventItem {
   googleMapsUrl?: string;
   invitationMessage: string;
   imageUrl?: string;
+  imageSource?: 'upload' | 'url';
   imagePosition?: 'top' | 'center' | 'bottom';
   imageAspect?: 'auto' | 'portrait' | 'landscape' | 'square';
   imageFit?: 'cover' | 'contain' | 'natural';
@@ -98,6 +99,7 @@ const eventSchema = new mongoose.Schema({
   googleMapsUrl: { type: String, default: '' },
   invitationMessage: { type: String, default: '' },
   imageUrl: { type: String, default: '' },
+  imageSource: { type: String, default: 'upload' },
   imagePosition: { type: String, default: 'top' },
   imageAspect: { type: String, default: 'auto' },
   imageFit: { type: String, default: 'cover' },
@@ -346,6 +348,7 @@ app.get('/api/public/primary-event', async (req, res) => {
         googleMapsUrl: event.googleMapsUrl || `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(event.venueAddress || event.venueName)}`,
         invitationMessage: event.invitationMessage,
         imageUrl: event.imageUrl,
+        imageSource: (event as any).imageSource || (event.imageUrl?.startsWith('http') ? 'url' : 'upload'),
         imagePosition: event.imagePosition,
         imageAspect: event.imageAspect,
         imageFit: event.imageFit,
@@ -380,6 +383,7 @@ app.get('/api/public/invite/:slug', async (req, res) => {
         googleMapsUrl: event.googleMapsUrl || `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(event.venueAddress || event.venueName)}`,
         invitationMessage: event.invitationMessage,
         imageUrl: event.imageUrl,
+        imageSource: (event as any).imageSource || (event.imageUrl?.startsWith('http') ? 'url' : 'upload'),
         imagePosition: event.imagePosition,
         imageAspect: event.imageAspect,
         imageFit: event.imageFit,
@@ -420,6 +424,7 @@ app.get('/api/public/invite/:slug/:guestCode', async (req, res) => {
         googleMapsUrl: event.googleMapsUrl || `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(event.venueAddress || event.venueName)}`,
         invitationMessage: event.invitationMessage,
         imageUrl: event.imageUrl,
+        imageSource: (event as any).imageSource || (event.imageUrl?.startsWith('http') ? 'url' : 'upload'),
         imagePosition: event.imagePosition,
         imageAspect: event.imageAspect,
         imageFit: event.imageFit,
@@ -580,6 +585,7 @@ app.post('/api/events', requireAdmin, async (req, res) => {
       googleMapsUrl,
       invitationMessage,
       imageUrl,
+      imageSource,
       imagePosition,
       imageAspect,
       imageFit,
@@ -615,6 +621,7 @@ app.post('/api/events', requireAdmin, async (req, res) => {
       googleMapsUrl: googleMapsUrl || (venueAddress ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(venueAddress)}` : ''),
       invitationMessage: invitationMessage || 'You are cordially invited to celebrate this memorable occasion with us.',
       imageUrl: imageUrl || '',
+      imageSource: imageSource || (imageUrl?.startsWith('http') ? 'url' : 'upload'),
       imagePosition: imagePosition || 'top',
       imageAspect: imageAspect || 'auto',
       imageFit: imageFit || 'cover',
@@ -648,6 +655,7 @@ app.put('/api/events/:id', requireAdmin, async (req, res) => {
       googleMapsUrl,
       invitationMessage,
       imageUrl,
+      imageSource,
       imagePosition,
       imageAspect,
       imageFit,
@@ -677,6 +685,7 @@ app.put('/api/events/:id', requireAdmin, async (req, res) => {
     }
     if (invitationMessage !== undefined) event.invitationMessage = invitationMessage;
     if (imageUrl !== undefined) event.imageUrl = imageUrl;
+    if (imageSource !== undefined) (event as any).imageSource = imageSource;
     if (imagePosition !== undefined) event.imagePosition = imagePosition;
     if (imageAspect !== undefined) event.imageAspect = imageAspect;
     if (imageFit !== undefined) event.imageFit = imageFit;
