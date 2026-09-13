@@ -34,14 +34,31 @@ if (!fs.existsSync(UPLOADS_DIR)) {
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://giridha1043_db_user:fKlSyoi5LTc8CVhf@ac-7mjxnjl-shard-00-00.pw6tzia.mongodb.net:27017,ac-7mjxnjl-shard-00-01.pw6tzia.mongodb.net:27017,ac-7mjxnjl-shard-00-02.pw6tzia.mongodb.net:27017/dwrs?ssl=true&authSource=admin&retryWrites=true&w=majority';
 const DB_NAME = process.env.MONGODB_DB_NAME || 'event';
 
-mongoose.connect(MONGODB_URI, { dbName: DB_NAME })
-  .then(() => {
-    console.log(`Connected to MongoDB Atlas database "${DB_NAME}" successfully`);
-    seedFromLegacyFileIfNeeded();
-  })
-  .catch((err) => {
-    console.error('MongoDB connection error:', err);
-  });
+let cachedPromise: Promise<typeof mongoose> | null = null;
+
+export async function connectDB() {
+  if (mongoose.connection.readyState === 1) {
+    return mongoose.connection;
+  }
+  if (!cachedPromise) {
+    const opts = {
+      dbName: DB_NAME,
+      bufferCommands: false,
+      serverSelectionTimeoutMS: 8000
+    };
+    cachedPromise = mongoose.connect(MONGODB_URI, opts).then((m) => {
+      console.log(`Connected to MongoDB database "${DB_NAME}" successfully`);
+      seedFromLegacyFileIfNeeded().catch((e) => console.error('Seed error:', e));
+      return m;
+    }).catch((err) => {
+      cachedPromise = null;
+      console.error('MongoDB connection error:', err);
+      throw err;
+    });
+  }
+  await cachedPromise;
+  return mongoose.connection;
+}
 
 // Data Interfaces
 export interface EventItem {
@@ -180,13 +197,18 @@ async function seedFromLegacyFileIfNeeded() {
 }
 
 // Configure CORS for production domains or allowed origins
-const allowedOrigin = process.env.CORS_ORIGIN || process.env.FRONTEND_URL || '*';
 app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', allowedOrigin);
+  const origin = req.headers.origin;
+  if (origin) {
+    res.header('Access-Control-Allow-Origin', origin);
+  } else {
+    res.header('Access-Control-Allow-Origin', '*');
+  }
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  res.header('Access-Control-Allow-Credentials', 'true');
   if (req.method === 'OPTIONS') {
-    return res.sendStatus(200);
+    return res.status(200).end();
   }
   next();
 });
@@ -197,6 +219,19 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 // Static uploads serving
 app.use('/uploads', express.static(UPLOADS_DIR));
+
+// Ensure MongoDB Connection Middleware for API routes
+app.use('/api', async (req, res, next) => {
+  try {
+    await connectDB();
+    next();
+  } catch (err: any) {
+    console.error('API MongoDB Connection Middleware Error:', err);
+    return res.status(500).json({
+      error: 'Database Connection Error. Please verify your MONGODB_URI environment variable on Vercel and ensure MongoDB Atlas IP Access List allows access (0.0.0.0/0).'
+    });
+  }
+});
 
 // Database-backed admin token authentication middleware
 async function requireAdmin(req: express.Request, res: express.Response, next: express.NextFunction) {
@@ -914,7 +949,19 @@ app.post('/api/events/:id/guests/import', requireAdmin, async (req, res) => {
 
 // 404 handler for API routes
 app.use('/api/*', (req, res) => {
-  res.status(404).json({ error: 'API endpoint not found' });
+  res.status(404).json({ error: `API endpoint ${req.originalUrl} not found` });
+});
+
+// Express Global Error Handler
+app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+  console.error('Express Unhandled Error:', err);
+  if (res.headersSent) {
+    return next(err);
+  }
+  const statusCode = err.status || err.statusCode || 500;
+  return res.status(statusCode).json({
+    error: err.message || 'Internal Server Error'
+  });
 });
 
 // Vite middleware & Production Server boot
