@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { X, Upload, Image as ImageIcon, Link as LinkIcon, Check, AlertCircle, Trash2 } from 'lucide-react';
 import { EventItem } from '../../types';
 import { parseAndConvertImageUrl, testImageLoad } from '../../utils/image';
+import { apiRequest } from '../../utils/api';
 
 interface EventModalProps {
   isOpen: boolean;
@@ -126,7 +127,7 @@ export const EventModal: React.FC<EventModalProps> = ({
     reader.onload = async () => {
       try {
         const base64Data = reader.result as string;
-        const res = await fetch('/api/upload', {
+        const data = await apiRequest<{ success: boolean; url: string }>('/api/upload', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -134,11 +135,6 @@ export const EventModal: React.FC<EventModalProps> = ({
           },
           body: JSON.stringify({ dataUrl: base64Data, filename: file.name })
         });
-
-        const data = await res.json();
-        if (!res.ok) {
-          throw new Error(data.error || 'Upload failed');
-        }
 
         setImageUrl(data.url);
         setImageSource('upload');
@@ -200,7 +196,7 @@ export const EventModal: React.FC<EventModalProps> = ({
       const url = eventToEdit ? `/api/events/${eventToEdit.id}` : '/api/events';
       const method = eventToEdit ? 'PUT' : 'POST';
 
-      const res = await fetch(url, {
+      const data = await apiRequest<{ success: boolean; event: EventItem }>(url, {
         method,
         headers: {
           'Content-Type': 'application/json',
@@ -208,11 +204,6 @@ export const EventModal: React.FC<EventModalProps> = ({
         },
         body: JSON.stringify(payload)
       });
-
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'Failed to save event');
-      }
 
       onSave(data.event);
       onClose();
