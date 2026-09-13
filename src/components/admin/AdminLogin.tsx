@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Lock, ArrowRight, User, ArrowLeft, Eye, EyeOff, ShieldAlert } from 'lucide-react';
+import { apiRequest } from '../../utils/api';
 
 interface AdminLoginProps {
   onLoginSuccess: (token: string) => void;
@@ -24,16 +25,11 @@ export const AdminLogin: React.FC<AdminLoginProps> = ({ onLoginSuccess, onBackTo
     setError(null);
 
     try {
-      const res = await fetch('/api/auth/login', {
+      const data = await apiRequest<{ success: boolean; token: string }>('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username: username.trim(), password })
       });
-
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'Authentication failed');
-      }
 
       localStorage.setItem('admin_token', data.token);
       onLoginSuccess(data.token);
