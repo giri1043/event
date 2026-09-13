@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { X, UserPlus, Check, AlertCircle, Trash2 } from 'lucide-react';
 import { GuestItem } from '../../types';
+import { apiRequest } from '../../utils/api';
 
 interface GuestModalProps {
   isOpen: boolean;
@@ -68,7 +69,7 @@ export const GuestModal: React.FC<GuestModalProps> = ({
         : `/api/events/${eventId}/guests`;
       const method = guestToEdit ? 'PUT' : 'POST';
 
-      const res = await fetch(url, {
+      const data = await apiRequest<{ success: boolean; guest: GuestItem }>(url, {
         method,
         headers: {
           'Content-Type': 'application/json',
@@ -76,11 +77,6 @@ export const GuestModal: React.FC<GuestModalProps> = ({
         },
         body: JSON.stringify(payload)
       });
-
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'Failed to save guest');
-      }
 
       onSave(data.guest);
       onClose();
