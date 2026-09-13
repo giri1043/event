@@ -41,14 +41,15 @@ export async function connectDB() {
     return mongoose.connection;
   }
   if (!cachedPromise) {
+    const uri = process.env.MONGODB_URI || MONGODB_URI;
+    const dbName = process.env.MONGODB_DB_NAME || DB_NAME;
     const opts = {
-      dbName: DB_NAME,
+      dbName,
       bufferCommands: false,
       serverSelectionTimeoutMS: 8000
     };
-    cachedPromise = mongoose.connect(MONGODB_URI, opts).then((m) => {
-      console.log(`Connected to MongoDB database "${DB_NAME}" successfully`);
-      seedFromLegacyFileIfNeeded().catch((e) => console.error('Seed error:', e));
+    cachedPromise = mongoose.connect(uri, opts).then((m) => {
+      console.log(`Connected to MongoDB database "${dbName}" successfully`);
       return m;
     }).catch((err) => {
       cachedPromise = null;
@@ -56,7 +57,13 @@ export async function connectDB() {
       throw err;
     });
   }
-  await cachedPromise;
+  try {
+    await cachedPromise;
+    seedFromLegacyFileIfNeeded().catch((e) => console.error('Background seed error:', e));
+  } catch (err) {
+    cachedPromise = null;
+    throw err;
+  }
   return mongoose.connection;
 }
 
@@ -412,12 +419,30 @@ app.get('/api/public/primary-event', async (req, res) => {
 app.get('/api/public/invite/:slug', async (req, res) => {
   try {
     const { slug } = req.params;
-    const event = await EventModel.findOne({ slug: slug.toLowerCase() });
+    if (!slug) {
+      return res.status(400).json({
+        success: false,
+        error: 'Slug parameter is required',
+        message: 'Slug parameter is required'
+      });
+    }
+
+    const cleanSlug = String(slug).trim().toLowerCase();
+    let event = await EventModel.findOne({ slug: cleanSlug });
+    if (!event && (cleanSlug.startsWith('evt-') || mongoose.Types.ObjectId.isValid(cleanSlug))) {
+      event = await EventModel.findOne({ id: cleanSlug });
+    }
+
     if (!event) {
-      return res.status(404).json({ error: 'Event invitation not found' });
+      return res.status(404).json({
+        success: false,
+        error: 'Event invitation not found',
+        message: 'Invitation not found or no longer available'
+      });
     }
 
     return res.json({
+      success: true,
       event: {
         id: event.id,
         slug: event.slug,
@@ -440,8 +465,13 @@ app.get('/api/public/invite/:slug', async (req, res) => {
       },
       guest: null
     });
-  } catch (err) {
-    return res.status(500).json({ error: 'Error fetching event invitation from MongoDB' });
+  } catch (err: any) {
+    console.error('Error in /api/public/invite/:slug:', err);
+    return res.status(500).json({
+      success: false,
+      error: 'Error fetching event invitation from MongoDB',
+      message: err.message || 'Server error loading invitation'
+    });
   }
 });
 
@@ -449,17 +479,37 @@ app.get('/api/public/invite/:slug', async (req, res) => {
 app.get('/api/public/invite/:slug/:guestCode', async (req, res) => {
   try {
     const { slug, guestCode } = req.params;
-    const event = await EventModel.findOne({ slug: slug.toLowerCase() });
+    if (!slug || !guestCode) {
+      return res.status(400).json({
+        success: false,
+        error: 'Slug and guestCode are required',
+        message: 'Slug and guestCode parameters are required'
+      });
+    }
+
+    const cleanSlug = String(slug).trim().toLowerCase();
+    const cleanGuestCode = String(guestCode).trim().toUpperCase();
+
+    let event = await EventModel.findOne({ slug: cleanSlug });
+    if (!event && (cleanSlug.startsWith('evt-') || mongoose.Types.ObjectId.isValid(cleanSlug))) {
+      event = await EventModel.findOne({ id: cleanSlug });
+    }
+
     if (!event) {
-      return res.status(404).json({ error: 'Event invitation not found' });
+      return res.status(404).json({
+        success: false,
+        error: 'Event invitation not found',
+        message: 'Invitation not found or no longer available'
+      });
     }
 
     const guest = await GuestModel.findOne({
       eventId: event.id,
-      guestCode: guestCode.toUpperCase()
+      guestCode: cleanGuestCode
     });
 
     return res.json({
+      success: true,
       event: {
         id: event.id,
         slug: event.slug,
@@ -494,8 +544,13 @@ app.get('/api/public/invite/:slug/:guestCode', async (req, res) => {
           }
         : null
     });
-  } catch (err) {
-    return res.status(500).json({ error: 'Error fetching guest invitation from MongoDB' });
+  } catch (err: any) {
+    console.error('Error in /api/public/invite/:slug/:guestCode:', err);
+    return res.status(500).json({
+      success: false,
+      error: 'Error fetching guest invitation from MongoDB',
+      message: err.message || 'Server error loading guest invitation'
+    });
   }
 });
 
@@ -948,8 +1003,12 @@ app.post('/api/events/:id/guests/import', requireAdmin, async (req, res) => {
 });
 
 // 404 handler for API routes
-app.use('/api/*', (req, res) => {
-  res.status(404).json({ error: `API endpoint ${req.originalUrl} not found` });
+app.use('/api*', (req, res) => {
+  res.status(404).json({
+    success: false,
+    error: 'Not Found',
+    message: `API endpoint ${req.originalUrl || req.url} not found`
+  });
 });
 
 // Express Global Error Handler
@@ -960,7 +1019,9 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
   }
   const statusCode = err.status || err.statusCode || 500;
   return res.status(statusCode).json({
-    error: err.message || 'Internal Server Error'
+    success: false,
+    error: err.name || 'Internal Server Error',
+    message: err.message || 'An unexpected server error occurred'
   });
 });
 
