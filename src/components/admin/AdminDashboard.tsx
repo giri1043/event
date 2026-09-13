@@ -29,6 +29,7 @@ import { GuestModal } from './GuestModal';
 import { ShareModal } from './ShareModal';
 import { ChangeCredentialsModal } from './ChangeCredentialsModal';
 import { exportGuestsToCSV, parseCSVToGuests } from '../../utils/csv';
+import { apiRequest } from '../../utils/api';
 
 interface AdminDashboardProps {
   token: string;
@@ -90,14 +91,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ token, onLogout 
   const fetchEvents = async () => {
     try {
       setLoading(true);
-      const res = await fetch('/api/events', {
+      const data = await apiRequest<{ events: EventItem[] }>('/api/events', {
         headers: { Authorization: `Bearer ${token}` }
       });
-      if (res.status === 401) {
-        onLogout();
-        return;
-      }
-      const data = await res.json();
       setEvents(data.events || []);
       if (data.events && data.events.length > 0) {
         if (!currentEventId || !data.events.some((e: EventItem) => e.id === currentEventId)) {
@@ -105,6 +101,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ token, onLogout 
         }
       }
     } catch (err: any) {
+      if (err.message && err.message.includes('401')) {
+        onLogout();
+        return;
+      }
       setError(err.message || 'Error fetching events');
     } finally {
       setLoading(false);
@@ -115,19 +115,18 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ token, onLogout 
   const fetchGuests = async (eventId: string) => {
     if (!eventId) return;
     try {
-      const res = await fetch(`/api/events/${eventId}/guests`, {
+      const data = await apiRequest<{ guests: GuestItem[]; metrics: any }>(`/api/events/${eventId}/guests`, {
         headers: { Authorization: `Bearer ${token}` }
       });
-      if (res.status === 401) {
-        onLogout();
-        return;
-      }
-      const data = await res.json();
       setGuests(data.guests || []);
       if (data.metrics) {
         setMetrics(data.metrics);
       }
     } catch (err: any) {
+      if (err.message && err.message.includes('401')) {
+        onLogout();
+        return;
+      }
       console.error('Error fetching guests', err);
     }
   };
@@ -173,29 +172,21 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ token, onLogout 
 
     if (deleteTarget.type === 'guest') {
       try {
-        const res = await fetch(`/api/events/${currentEventId}/guests/${deleteTarget.id}`, {
+        await apiRequest(`/api/events/${currentEventId}/guests/${deleteTarget.id}`, {
           method: 'DELETE',
           headers: { Authorization: `Bearer ${token}` }
         });
-        if (res.ok) {
-          setGuests((prev) => prev.filter((g) => g.id !== deleteTarget.id));
-          fetchGuests(currentEventId);
-          setToast({
-            type: 'success',
-            message: `Guest "${deleteTarget.name}" deleted successfully.`
-          });
-        } else {
-          const data = await res.json().catch(() => ({}));
-          setToast({
-            type: 'error',
-            message: data.error || 'Failed to delete guest.'
-          });
-        }
-      } catch (err) {
+        setGuests((prev) => prev.filter((g) => g.id !== deleteTarget.id));
+        fetchGuests(currentEventId);
+        setToast({
+          type: 'success',
+          message: `Guest "${deleteTarget.name}" deleted successfully.`
+        });
+      } catch (err: any) {
         console.error('Failed to delete guest', err);
         setToast({
           type: 'error',
-          message: 'Network error deleting guest record.'
+          message: err.message || 'Failed to delete guest.'
         });
       } finally {
         setIsDeleting(false);
@@ -203,34 +194,26 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ token, onLogout 
       }
     } else if (deleteTarget.type === 'event') {
       try {
-        const res = await fetch(`/api/events/${deleteTarget.id}`, {
+        await apiRequest(`/api/events/${deleteTarget.id}`, {
           method: 'DELETE',
           headers: { Authorization: `Bearer ${token}` }
         });
-        if (res.ok) {
-          const remaining = events.filter((e) => e.id !== deleteTarget.id);
-          setEvents(remaining);
-          if (remaining.length > 0) {
-            setCurrentEventId(remaining[0].id);
-          } else {
-            setCurrentEventId('');
-          }
-          setToast({
-            type: 'success',
-            message: `Event "${deleteTarget.name}" permanently deleted.`
-          });
+        const remaining = events.filter((e) => e.id !== deleteTarget.id);
+        setEvents(remaining);
+        if (remaining.length > 0) {
+          setCurrentEventId(remaining[0].id);
         } else {
-          const data = await res.json().catch(() => ({}));
-          setToast({
-            type: 'error',
-            message: data.error || 'Failed to delete event.'
-          });
+          setCurrentEventId('');
         }
-      } catch (err) {
+        setToast({
+          type: 'success',
+          message: `Event "${deleteTarget.name}" permanently deleted.`
+        });
+      } catch (err: any) {
         console.error('Failed to delete event', err);
         setToast({
           type: 'error',
-          message: 'Network error deleting event.'
+          message: err.message || 'Failed to delete event.'
         });
       } finally {
         setIsDeleting(false);
@@ -255,7 +238,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ token, onLogout 
           return;
         }
 
-        const res = await fetch(`/api/events/${currentEventId}/guests/import`, {
+        const data = await apiRequest<{ count: number }>(`/api/events/${currentEventId}/guests/import`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -264,23 +247,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ token, onLogout 
           body: JSON.stringify({ guests: parsed })
         });
 
-        const data = await res.json();
-        if (res.ok) {
-          setToast({
-            type: 'success',
-            message: `Successfully imported ${data.count} guest records!`
-          });
-          fetchGuests(currentEventId);
-        } else {
-          setToast({
-            type: 'error',
-            message: data.error || 'Failed to import CSV'
-          });
-        }
-      } catch (err) {
+        setToast({
+          type: 'success',
+          message: `Successfully imported ${data.count} guest records!`
+        });
+        fetchGuests(currentEventId);
+      } catch (err: any) {
         setToast({
           type: 'error',
-          message: 'Error processing CSV file.'
+          message: err.message || 'Error processing CSV file.'
         });
       }
     };
