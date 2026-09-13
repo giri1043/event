@@ -142,13 +142,25 @@ export default function App() {
   }
 
   if (publicError || !publicData) {
+    const isServerError = publicError && (
+      publicError.toLowerCase().includes('database') ||
+      publicError.toLowerCase().includes('server') ||
+      publicError.toLowerCase().includes('connection') ||
+      publicError.toLowerCase().includes('500') ||
+      publicError.toLowerCase().includes('503')
+    );
+
+    const errorTitle = isServerError
+      ? 'Service Temporarily Unavailable'
+      : 'Invitation Not Found';
+
     return (
       <div className="min-h-screen bg-[#faf8f5] flex flex-col items-center justify-center p-6 text-center">
         <div className="w-14 h-14 rounded-2xl bg-[#f2ebd9] text-[#8e6c31] flex items-center justify-center mb-4">
           <AlertCircle className="w-7 h-7" />
         </div>
         <h1 className="font-serif text-3xl text-[#2d241c]">
-          Invitation Not Found
+          {errorTitle}
         </h1>
         <p className="text-xs text-[#73604d] mt-2 max-w-sm leading-relaxed">
           {publicError || 'The event or personalized invite link could not be located. Please verify the URL provided by your host.'}
