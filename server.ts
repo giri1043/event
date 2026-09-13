@@ -9,8 +9,18 @@ const app = express();
 const PORT = Number(process.env.PORT) || 3000;
 
 // Setup directories for file uploads
-const DATA_DIR = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.join(process.cwd(), 'data');
-const UPLOADS_DIR = process.env.UPLOADS_DIR ? path.resolve(process.env.UPLOADS_DIR) : path.join(process.cwd(), 'uploads');
+const DATA_DIR = process.env.VERCEL
+  ? path.join('/tmp', 'data')
+  : process.env.DATA_DIR
+  ? path.resolve(process.env.DATA_DIR)
+  : path.join(process.cwd(), 'data');
+
+const UPLOADS_DIR = process.env.VERCEL
+  ? path.join('/tmp', 'uploads')
+  : process.env.UPLOADS_DIR
+  ? path.resolve(process.env.UPLOADS_DIR)
+  : path.join(process.cwd(), 'uploads');
+
 const DB_FILE = process.env.DB_FILE_PATH ? path.resolve(process.env.DB_FILE_PATH) : path.join(DATA_DIR, 'db.json');
 
 if (!fs.existsSync(DATA_DIR)) {
@@ -928,4 +938,8 @@ async function startServer() {
   });
 }
 
-startServer();
+if (!process.env.VERCEL) {
+  startServer();
+}
+
+export default app;
