@@ -4,6 +4,7 @@ import { AdminLogin } from './components/admin/AdminLogin';
 import { AdminDashboard } from './components/admin/AdminDashboard';
 import { EventItem, GuestItem } from './types';
 import { AlertCircle, Lock, ShieldAlert } from 'lucide-react';
+import { apiRequest } from './utils/api';
 
 export default function App() {
   const [currentPath, setCurrentPath] = useState(window.location.pathname);
@@ -34,11 +35,10 @@ export default function App() {
   // Verify admin session if on admin route
   useEffect(() => {
     if (isAdminRoute && adminToken) {
-      fetch('/api/auth/verify', {
+      apiRequest<{ authenticated: boolean }>('/api/auth/verify', {
         method: 'POST',
         headers: { Authorization: `Bearer ${adminToken}` }
       })
-        .then((res) => res.json())
         .then((data) => {
           if (!data.authenticated) {
             localStorage.removeItem('admin_token');
@@ -69,14 +69,7 @@ export default function App() {
       ? `/api/public/invite/${encodeURIComponent(slug)}/${encodeURIComponent(guestCode)}`
       : `/api/public/invite/${encodeURIComponent(slug)}`;
 
-    fetch(apiUrl)
-      .then(async (res) => {
-        if (!res.ok) {
-          const err = await res.json().catch(() => ({}));
-          throw new Error(err.error || 'Invitation not found');
-        }
-        return res.json();
-      })
+    apiRequest<{ event: EventItem; guest: GuestItem | null }>(apiUrl)
       .then((data) => {
         if (data && data.event) {
           setPublicData(data);
@@ -96,7 +89,7 @@ export default function App() {
 
   const handleAdminLogout = async () => {
     if (adminToken) {
-      await fetch('/api/auth/logout', {
+      await apiRequest('/api/auth/logout', {
         method: 'POST',
         headers: { Authorization: `Bearer ${adminToken}` }
       }).catch(() => {});
