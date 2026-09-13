@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { EventItem, GuestItem } from '../../types';
 import { triggerConfetti } from '../../utils/confetti';
+import { apiRequest } from '../../utils/api';
 
 interface EnvelopeInvitationProps {
   event: EventItem;
@@ -160,16 +161,10 @@ export const EnvelopeInvitation: React.FC<EnvelopeInvitationProps> = ({
         notes: notes.trim()
       };
 
-      const res = await fetch('/api/public/rsvp', {
+      const data = await apiRequest<{ guest?: GuestItem }>('/api/public/rsvp', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
-
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'Failed to submit RSVP');
-      }
 
       if (data.guest) {
         setGuest(data.guest);
