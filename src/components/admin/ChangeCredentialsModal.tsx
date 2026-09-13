@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { X, Key, User, Check, ShieldAlert, Lock } from 'lucide-react';
+import { apiRequest } from '../../utils/api';
 
 interface ChangeCredentialsModalProps {
   isOpen: boolean;
@@ -50,10 +51,9 @@ export const ChangeCredentialsModal: React.FC<ChangeCredentialsModalProps> = ({
     setLoading(true);
 
     try {
-      const res = await fetch('/api/auth/change-password', {
+      await apiRequest('/api/auth/change-password', {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`
         },
         body: JSON.stringify({
@@ -62,11 +62,6 @@ export const ChangeCredentialsModal: React.FC<ChangeCredentialsModalProps> = ({
           newPassword: newPassword.trim() || undefined
         })
       });
-
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'Failed to update credentials');
-      }
 
       setSuccess('Credentials updated successfully!');
       setCurrentPassword('');
